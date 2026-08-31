@@ -28,8 +28,7 @@ function openSupplierSheet_(id, tab) {
   try {
     ss = SpreadsheetApp.openById(id);
   } catch (e) {
-    throw new Error('Cannot open that sheet. Check the ID, and share it (Viewer) with ' +
-      Session.getEffectiveUser().getEmail());
+    throw new Error('Cannot open that sheet. Check the ID, and share it (Viewer) with ' + ownerEmail_());
   }
   var sh = tab ? ss.getSheetByName(tab) : ss.getSheets()[0];
   if (!sh) throw new Error('Tab "' + tab + '" not found in that sheet');
@@ -53,7 +52,7 @@ function fnAdminSyncPreview_(p) {
     headers: headers,
     sample: sample,
     rows: lastRow - 1,
-    owner_hint: Session.getEffectiveUser().getEmail()
+    owner_hint: ownerEmail_()
   });
 }
 
@@ -224,4 +223,10 @@ function fnAdminSyncTemplate_(p) {
   DriveApp.getFileById(ss.getId()).setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   audit_(p.actor || 'admin', 'sync_template', ss.getId(), brands.length + ' brand tabs');
   return ok_({ url: ss.getUrl(), sheet_id: ss.getId(), name: name });
+}
+
+/** getEffectiveUser needs the userinfo.email scope — fall back gracefully. */
+function ownerEmail_() {
+  try { return Session.getEffectiveUser().getEmail() || 'the Merchforce backend account'; }
+  catch (e) { return 'the Merchforce backend account'; }
 }
