@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Merchforce — Bulk merchandise, direct from stock</title>
+<meta name="description" content="Browse in-stock branded merchandise, check quantity pricing, and raise a bulk request in minutes.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%232447f5'/><text x='50' y='68' font-size='55' font-family='sans-serif' font-weight='800' fill='white' text-anchor='middle'>M</text></svg>">
+</head>
+<body>
+
+<header class="hdr">
+  <div class="wrap hdr-in">
+    <a class="logo" href="./">
+      <span class="mark">M</span> <span id="siteName">Merchforce</span>
+    </a>
+    <div class="search">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" type="search" placeholder="Search products, categories, SKUs…" autocomplete="off">
+    </div>
+    <div class="hdr-spacer"></div>
+    <button class="btn cart-btn" id="cartBtn">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6h15l-1.7 8.5a2 2 0 0 1-2 1.5H8.6a2 2 0 0 1-2-1.6L4.7 3.4A1 1 0 0 0 3.7 2.6H2"/><circle cx="9.5" cy="20" r="1.6"/><circle cx="17.5" cy="20" r="1.6"/></svg>
+      Request list <span class="cart-count" id="cartCount"></span>
+    </button>
+  </div>
+</header>
+
+<nav class="brandbar" id="brandbar" hidden>
+  <div class="wrap brandbar-in" id="brandChips"></div>
+</nav>
+
+<main class="wrap">
+  <div class="filters" id="filters">
+    <select id="fCat"><option value="">All categories</option></select>
+    <select id="fSub" hidden><option value="">All subcategories</option></select>
+    <select id="fStock">
+      <option value="">Any stock</option>
+      <option value="in">In stock</option>
+      <option value="low">Low stock</option>
+    </select>
+    <select id="fSort">
+      <option value="">Sort: Featured</option>
+      <option value="price-asc">Price: low to high</option>
+      <option value="price-desc">Price: high to low</option>
+      <option value="moq-asc">MOQ: low to high</option>
+      <option value="name">Name A–Z</option>
+    </select>
+    <input id="fBudget" type="number" min="0" placeholder="Max unit price ₹" style="width:150px">
+    <span class="count" id="resCount"></span>
+  </div>
+  <div class="chip-row" id="activeChips"></div>
+  <div id="grid" class="grid"><div class="spin"></div></div>
+</main>
+
+<!-- product modal -->
+<div class="overlay" id="pOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+    <button class="close" id="pClose" aria-label="Close">✕</button>
+    <div class="pd" id="pBody"></div>
+  </div>
+</div>
+
+<!-- cart drawer -->
+<div class="drawer" id="drawer">
+  <div class="d-hd">
+    <h3>Request list</h3>
+    <button class="btn ghost small" id="dClose">✕</button>
+  </div>
+  <div class="d-body" id="dBody"></div>
+  <div class="d-ft" id="dFoot"></div>
+</div>
+
+<!-- gated-mode login -->
+<div class="overlay" id="loginOverlay" hidden>
+  <div class="modal" style="max-width:400px">
+    <div style="padding:30px">
+      <div class="logo" style="margin-bottom:14px"><span class="mark">M</span> <span id="siteName2">Merchforce</span></div>
+      <h2 style="margin:0 0 4px">Sign in</h2>
+      <p style="color:var(--ink-3);margin:0 0 18px;font-size:14px">This catalog is available to approved buyers.</p>
+      <div class="field"><label>Email</label><input id="lEmail" type="email" autocomplete="username"></div>
+      <div class="field"><label>Password</label><input id="lPass" type="password" autocomplete="current-password"></div>
+      <div class="form-err" id="lErr"></div>
+      <button class="btn primary" id="lGo" style="width:100%;justify-content:center">Sign in</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="assets/js/app.js"></script>
+</body>
+</html>
