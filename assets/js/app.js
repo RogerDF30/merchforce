@@ -212,7 +212,9 @@ function render() {
     c.innerHTML =
       '<div class="ph">' + (p.images[0]
         ? '<img loading="lazy" src="' + esc(p.images[0]) + '" alt="">'
-        : esc(p.name.charAt(0))) + '</div>' +
+        : esc(p.name.charAt(0))) +
+        (p.images.length > 1 ? '<span class="img-count">' + p.images.length + ' photos</span>' : '') +
+      '</div>' +
       '<div class="body">' +
         '<div class="brand">' + esc(brandName(p.brand)) + '</div>' +
         '<div class="name">' + esc(p.name) + '</div>' +
@@ -267,8 +269,16 @@ function openProduct(p) {
   var imgs = p.images;
   body.innerHTML =
     '<div class="gallery">' +
-      '<div class="main" id="gMain">' + (imgs[0]
-        ? '<img src="' + esc(imgs[0]) + '" alt="">' : esc(p.name.charAt(0))) + '</div>' +
+      '<div class="main" id="gMain" style="position:relative">' + (imgs[0]
+        ? '<img id="gImg" src="' + esc(imgs[0]) + '" alt="">' : esc(p.name.charAt(0))) +
+        (imgs.length > 1
+          ? '<button class="gal-nav prev" id="gPrev" aria-label="Previous image">‹</button>' +
+            '<button class="gal-nav next" id="gNext" aria-label="Next image">›</button>' +
+            '<div class="gal-dots" id="gDots">' + imgs.map(function (u, i) {
+              return '<span class="' + (i ? '' : 'on') + '"></span>';
+            }).join('') + '</div>'
+          : '') +
+      '</div>' +
       (imgs.length > 1
         ? '<div class="thumbs">' + imgs.map(function (u, i) {
             return '<img src="' + esc(u) + '" data-i="' + i + '" class="' + (i ? '' : 'on') + '">';
@@ -288,10 +298,11 @@ function openProduct(p) {
           : '<li>' + esc(s) + '</li>';
       }).join('') + '</ul>' : '') +
       (p.show_price && p.tiers.length
-        ? '<table class="tiers" id="tierTable"><tr><th>Quantity</th><th>Unit price</th></tr>' +
+        ? '<table class="tiers" id="tierTable"><tr><th>Quantity</th><th>Unit price</th><th>GST</th></tr>' +
           p.tiers.map(function (t, i) {
             var upTo = p.tiers[i + 1] ? '–' + (p.tiers[i + 1].min - 1) : '+';
-            return '<tr data-min="' + t.min + '"><td>' + t.min + upTo + '</td><td>' + inr(t.price) + '</td></tr>';
+            var g = (t.gst === null || t.gst === undefined || t.gst === '') ? p.gst : t.gst;
+            return '<tr data-min="' + t.min + '"><td>' + t.min + upTo + '</td><td>' + inr(t.price) + '</td><td>' + g + '%</td></tr>';
           }).join('') + '</table>' : '') +
       '<div class="qty-row">' +
         '<div class="qty">' +
@@ -324,12 +335,34 @@ function openProduct(p) {
   $('qInput').oninput = refresh;
   $('qMinus').onclick = function () { $('qInput').value = Math.max(p.moq, Number($('qInput').value) - p.moq); refresh(); };
   $('qPlus').onclick = function () { $('qInput').value = Number($('qInput').value) + p.moq; refresh(); };
+  // carousel: arrows, dots, thumbs and swipe all drive one index
+  var gi = 0;
+  function showImg(i) {
+    if (!imgs.length) return;
+    gi = (i + imgs.length) % imgs.length;
+    var im = $('gImg');
+    if (im) im.src = imgs[gi];
+    body.querySelectorAll('.thumbs img').forEach(function (x, j) {
+      x.classList.toggle('on', j === gi);
+    });
+    body.querySelectorAll('#gDots span').forEach(function (d, j) {
+      d.classList.toggle('on', j === gi);
+    });
+  }
+  if (imgs.length > 1) {
+    $('gPrev').onclick = function (e) { e.stopPropagation(); showImg(gi - 1); };
+    $('gNext').onclick = function (e) { e.stopPropagation(); showImg(gi + 1); };
+    var tx = null;
+    $('gMain').addEventListener('touchstart', function (e) { tx = e.touches[0].clientX; }, { passive: true });
+    $('gMain').addEventListener('touchend', function (e) {
+      if (tx === null) return;
+      var dx = e.changedTouches[0].clientX - tx;
+      if (Math.abs(dx) > 40) showImg(gi + (dx < 0 ? 1 : -1));
+      tx = null;
+    }, { passive: true });
+  }
   body.querySelectorAll('.thumbs img').forEach(function (t) {
-    t.onclick = function () {
-      $('gMain').innerHTML = '<img src="' + esc(imgs[Number(t.dataset.i)]) + '">';
-      body.querySelectorAll('.thumbs img').forEach(function (x) { x.classList.remove('on'); });
-      t.classList.add('on');
-    };
+    t.onclick = function () { showImg(Number(t.dataset.i)); };
   });
   $('addBtn').onclick = function () {
     var q = Math.floor(Number($('qInput').value) || 0);
@@ -518,7 +551,17 @@ function doLogin() {
 }
 
 /* ---------- wire up ---------- */
-$('q').addEventListener('input', function () { S.q = this.value; render(); });
+$('q').addEventListener('input', function () {
+  S.q = this.value;
+  render();
+  // search analytics: record settled queries (and the ones that found nothing)
+  clearTimeout(S._searchT);
+  S._searchT = setTimeout(function () {
+    var term = S.q.trim().toLowerCase().slice(0, 40);
+    if (term.length < 3) return;
+    track(term, filtered().length ? 'search' : 'search_nil');
+  }, 1200);
+});
 $('fCat').addEventListener('change', function () { S.cat = this.value; S.sub = ''; syncSub(); render(); });
 $('fSub').addEventListener('change', function () { S.sub = this.value; render(); });
 $('fStock').addEventListener('change', function () { S.stock = this.value; render(); });

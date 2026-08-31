@@ -4,12 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Merchforce Admin</title>
-<meta name="robots" content="noindex">
+<meta name="robots" content="noindex,nofollow">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/css/style.css?v=4">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css?v=5">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%2316192b'/><text x='50' y='68' font-size='55' font-family='sans-serif' font-weight='800' fill='white' text-anchor='middle'>M</text></svg>">
+<style>body { background: #fff; }</style>
 </head>
 <body>
 
@@ -27,42 +28,44 @@
 
 <!-- console -->
 <div id="console" hidden>
-  <header class="hdr">
-    <div class="wrap hdr-in">
-      <a class="logo" href="admin.html"><span class="mark" style="background:var(--ink)">M</span> Merchforce <small>ADMIN</small></a>
-      <div class="hdr-spacer"></div>
-      <a class="btn small" href="./" target="_blank">View storefront ↗</a>
-      <button class="btn small" id="lockNow">Lock</button>
+  <div class="wrap">
+    <div class="page-head row-between">
+      <div>
+        <h1>Merchforce Admin</h1>
+        <div class="sub">Supplier console · CompanyStore.IO platform</div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <a class="btn small" href="./" target="_blank">View storefront ↗</a>
+        <button class="btn small" id="lockNow">Lock</button>
+      </div>
     </div>
-  </header>
-  <nav class="tabs wrap" id="tabs">
-    <button class="tab on" data-t="requests">Requests</button>
-    <button class="tab" data-t="catalog">Catalog</button>
-    <button class="tab" data-t="brands">Brands</button>
-    <button class="tab" data-t="users">Users</button>
-    <button class="tab" data-t="analytics">Analytics</button>
-    <button class="tab" data-t="settings">Settings</button>
-  </nav>
-  <main class="wrap">
+    <nav class="chips" id="tabs">
+      <button class="chip on" data-t="requests">Requests</button>
+      <button class="chip" data-t="catalog">Catalog</button>
+      <button class="chip" data-t="brands">Brands</button>
+      <button class="chip" data-t="users">Users</button>
+      <button class="chip" data-t="analytics">Analytics</button>
+      <button class="chip" data-t="settings">Settings</button>
+    </nav>
     <section class="panel" id="p-requests"><div class="spin"></div></section>
     <section class="panel" id="p-catalog" hidden></section>
     <section class="panel" id="p-brands" hidden></section>
     <section class="panel" id="p-users" hidden></section>
     <section class="panel" id="p-analytics" hidden></section>
     <section class="panel" id="p-settings" hidden></section>
-  </main>
+  </div>
 </div>
 
-<!-- edit modal -->
-<div class="overlay" id="mOverlay" hidden>
-  <div class="modal" style="max-width:680px">
-    <button class="close" id="mClose">✕</button>
-    <div id="mBody" style="padding:26px"></div>
+<!-- right-hand edit drawer -->
+<div class="rdrawer" id="mOverlay" hidden>
+  <div class="rdrawer-inner">
+    <div style="display:flex;justify-content:flex-end"><button class="btn ghost small" id="mClose">✕ Close</button></div>
+    <div id="mBody"></div>
   </div>
 </div>
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="assets/js/admin.js?v=4"></script>
+<script src="assets/js/admin.js?v=5"></script>
 </body>
 </html>

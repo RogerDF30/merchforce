@@ -8,7 +8,10 @@ function fnAdminUnlock_(p) {
 function fnAdminCatalog_(p) {
   var tiers = {};
   readRows_('PriceTiers').forEach(function (t) {
-    (tiers[t.sku] = tiers[t.sku] || []).push({ min: toNum_(t.min_qty), price: toNum_(t.unit_price) });
+    (tiers[t.sku] = tiers[t.sku] || []).push({
+      min: toNum_(t.min_qty), price: toNum_(t.unit_price),
+      gst: t.gst === '' || t.gst === undefined ? '' : toNum_(t.gst)
+    });
   });
   var products = readRows_('Products').map(function (r) {
     return {
@@ -36,6 +39,13 @@ function fnAdminProductSave_(p) {
   var d = p.product || {};
   if (!d.sku || !d.name) return err_('SKU and name are required');
   d.sku = String(d.sku).trim().toUpperCase();
+  // RSM discipline: the first tier must start at the MOQ (MOQ 1 for a flat price).
+  var moq = toNum_(d.moq) || 1;
+  var sortedTiers = (d.tiers || []).slice().sort(function (a, b) { return toNum_(a.min) - toNum_(b.min); });
+  if (sortedTiers.length && toNum_(sortedTiers[0].min) !== moq) {
+    return err_('The first price tier must start at the MOQ (' + moq + ')');
+  }
+  d.tiers = sortedTiers;
 
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
@@ -68,10 +78,11 @@ function fnAdminProductSave_(p) {
       appendRecord_('Products', rec);
     }
 
-    // replace tiers
+    // replace tiers (per-tier GST optional: blank inherits the product rate)
     replaceChildRows_('PriceTiers', function (r) { return r.sku === d.sku; },
       (d.tiers || []).map(function (t) {
-        return { sku: d.sku, min_qty: toNum_(t.min), unit_price: toNum_(t.price) };
+        return { sku: d.sku, min_qty: toNum_(t.min), unit_price: toNum_(t.price),
+                 gst: (t.gst === '' || t.gst === undefined || t.gst === null) ? '' : toNum_(t.gst) };
       }));
 
     CacheService.getScriptCache().remove('catalog_v1');

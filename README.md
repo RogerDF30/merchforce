@@ -52,5 +52,13 @@ The frontends auto-target the mock (`/api`, token `mf-demo-token`) when served f
 ## Settings that matter
 
 - `access_mode`: `open` (anyone can browse + request) or `gated` (buyer accounts required) — Admin → Settings.
-- `show_stock_numbers`: badge only, or exact ATP.
+- `show_stock_numbers`: badge only, or exact ATP (applies to the storefront immediately on save).
 - `notify_email`: gets an email on every new request.
+
+## Supplier stock sync
+
+The supplier keeps managing stock in their own Google Sheet. In Admin → Settings → Stock sync: paste the sheet link, share the sheet (Viewer) with the backend account, Load sheet, map the SKU and stock columns from its headers, then Sync now — or tick hourly auto-sync (time-driven trigger). On-hand is the only field written; reservations and safety stock stay owned by the request lifecycle. Every change lands in StockLog.
+
+## Pricing model
+
+Quantity price tiers per product, RSM-style: the first tier must start at the MOQ (use MOQ 1 for a flat price at any quantity). GST is held per tier, blank inherits the product rate — set it per tier only when volume pricing crosses a tax slab.

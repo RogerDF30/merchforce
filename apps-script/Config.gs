@@ -17,7 +17,7 @@ var SHEETS = {
                  'specs', 'image_urls', 'moq', 'gst_rate', 'lead_time',
                  'on_hand', 'reserved', 'safety_stock', 'reorder_point',
                  'visible', 'show_price', 'created', 'updated'],
-  PriceTiers:   ['sku', 'min_qty', 'unit_price'],
+  PriceTiers:   ['sku', 'min_qty', 'unit_price', 'gst'],
   Requests:     ['request_id', 'created', 'status', 'company', 'contact', 'email',
                  'phone', 'gstin', 'notes', 'user_email', 'total_est',
                  'status_dates', 'admin_notes', 'updated'],
@@ -43,7 +43,15 @@ var DEFAULT_SETTINGS = {
   notify_email: '',             // supplier email for new-request pings
   low_stock_threshold: '25',
   currency: 'INR',
-  primary_color: '#1a1f36'
+  primary_color: '#1a1f36',
+  // Supplier stock sync: the supplier keeps managing stock in their OWN
+  // Google Sheet; we pull from it (see StockSync.gs).
+  sync_sheet_id: '',
+  sync_tab: '',
+  sync_sku_col: '',
+  sync_stock_col: '',
+  sync_auto: 'off',             // off | hourly
+  sync_last: ''                 // JSON summary of the last run
 };
 
 function props_() { return PropertiesService.getScriptProperties(); }
@@ -74,5 +82,10 @@ function saveSettings_(patch) {
     if (idx >= 0) sh.getRange(idx + 2, 2).setValue(String(patch[k]));
     else sh.appendRow([k, String(patch[k])]);
   });
-  CacheService.getScriptCache().remove('settings');
+  // The catalog payload bakes settings in (stock display, prices), so a
+  // settings change must invalidate it too, or the storefront serves the old
+  // behaviour for up to 5 minutes.
+  var cache = CacheService.getScriptCache();
+  cache.remove('settings');
+  cache.remove('catalog_v1');
 }

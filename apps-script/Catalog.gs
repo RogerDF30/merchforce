@@ -55,7 +55,8 @@ function fnCatalog_(p) {
   var tiers = {};
   readRows_('PriceTiers').forEach(function (t) {
     if (!tiers[t.sku]) tiers[t.sku] = [];
-    tiers[t.sku].push({ min: toNum_(t.min_qty), price: toNum_(t.unit_price) });
+    tiers[t.sku].push({ min: toNum_(t.min_qty), price: toNum_(t.unit_price),
+                        gst: t.gst === '' || t.gst === undefined ? null : toNum_(t.gst) });
   });
   Object.keys(tiers).forEach(function (k) {
     tiers[k].sort(function (a, b) { return a.min - b.min; });
@@ -77,17 +78,20 @@ function fnProduct_(p) {
   var tiers = {};
   tiers[p.sku] = readRows_('PriceTiers')
     .filter(function (t) { return t.sku === p.sku; })
-    .map(function (t) { return { min: toNum_(t.min_qty), price: toNum_(t.unit_price) }; })
+    .map(function (t) { return { min: toNum_(t.min_qty), price: toNum_(t.unit_price),
+                                 gst: t.gst === '' || t.gst === undefined ? null : toNum_(t.gst) }; })
     .sort(function (a, b) { return a.min - b.min; });
   return ok_({ product: publicProduct_(row, tiers, s) });
 }
 
 /**
- * Click/view tracking, aggregated per (date, sku, type) so Events stays small.
- * Body: {events: [{sku, type}]} — type: view | click | request
+ * Behaviour tracking, aggregated per (date, key, type) so Events stays small.
+ * Body: {events: [{sku, type}]} — for search types, `sku` carries the term.
  */
+var TRACK_TYPES = { view: 1, click: 1, request: 1, search: 1, search_nil: 1 };
+
 function fnTrack_(p) {
-  var events = p.events || [];
+  var events = (p.events || []).filter(function (ev) { return TRACK_TYPES[ev.type]; });
   if (!events.length) return ok_();
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);

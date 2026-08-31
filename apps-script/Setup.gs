@@ -6,8 +6,8 @@
  * Idempotent: refuses to run twice unless {force:true}.
  */
 
-function setupRun() { // editor-friendly entry point
-  var res = setup_({ key: SETUP_KEY });
+function setupRun() { // editor-friendly entry point (runs as owner, so pass the stored admin key)
+  var res = setup_({ key: SETUP_KEY, force: true, adminKey: props_().getProperty('ADMIN_PASS') || '' });
   Logger.log(JSON.stringify(res, null, 2));
 }
 
@@ -16,8 +16,13 @@ function setup_(p) {
     // still allow, but flag it — the key must be rotated after use
   }
   if (String(p.key) !== SETUP_KEY) return { ok: false, error: 'Bad setup key' };
-  if (props_().getProperty('SHEET_ID') && !p.force) {
-    return { ok: false, error: 'Already set up. Pass force:true to re-run (existing data kept).' };
+  if (props_().getProperty('SHEET_ID')) {
+    // Once installed, re-running setup (which returns the secrets) requires the
+    // admin key too — the repo is public, so SETUP_KEY alone must not unlock it.
+    if (!p.force) return { ok: false, error: 'Already set up. Pass force:true plus adminKey to re-run (existing data kept).' };
+    if (String(p.adminKey) !== props_().getProperty('ADMIN_PASS')) {
+      return { ok: false, error: 'adminKey required to re-run setup' };
+    }
   }
 
   // 1. Drive folder tree

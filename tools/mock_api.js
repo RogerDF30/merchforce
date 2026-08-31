@@ -21,7 +21,8 @@ const db = {
   settings: {
     site_name: 'Merchforce', tagline: 'Bulk merchandise, direct from stock',
     access_mode: 'open', show_stock_numbers: 'badge', notify_email: '',
-    low_stock_threshold: '25', currency: 'INR', primary_color: '#1a1f36'
+    low_stock_threshold: '25', currency: 'INR', primary_color: '#1a1f36',
+    sync_sheet_id: '', sync_tab: '', sync_sku_col: '', sync_stock_col: '', sync_auto: 'off', sync_last: ''
   },
   brands: seed.brands.map(b => ({ brand_id: b.id, name: b.name, logo_url: '', description: '', active: 'TRUE', sort: b.sort })),
   products: seed.products.map(p => ({
@@ -63,6 +64,13 @@ const db = {
   // reserve stock for the confirmed one
   const conf = db.requests.find(r => r.status === 'Confirmed');
   db.lines.filter(l => l.request_id === conf.request_id).forEach(l => { prodOf(l.sku).reserved += l.qty; });
+  // search noise
+  ['tumbler','hoodie','power bank','laptop bag','diary'].forEach((t,i)=>{
+    for (let d=1; d<60; d+=7+i) db.events.push({ date: dstr(new Date(Date.now()-d*864e5)), sku: t, type: 'search', count: 1+(i%3) });
+  });
+  ['umbrella','keychain','trophy'].forEach((t,i)=>{
+    for (let d=2; d<50; d+=9+i) db.events.push({ date: dstr(new Date(Date.now()-d*864e5)), sku: t, type: 'search_nil', count: 1 });
+  });
   // some view/click noise
   db.products.forEach((p, i) => {
     for (let d = 0; d < 80; d += 3 + (i % 5)) {
@@ -74,7 +82,7 @@ const db = {
 function dstr(d) { return d.toISOString().slice(0, 10); }
 function prodOf(sku) { return db.products.find(p => p.sku === sku); }
 function nameOf(sku) { const p = prodOf(sku); return p ? p.name : sku; }
-function tiersOf(sku) { return db.tiers.filter(t => t.sku === sku).map(t => ({ min: t.min_qty, price: t.unit_price })).sort((a, b) => a.min - b.min); }
+function tiersOf(sku) { return db.tiers.filter(t => t.sku === sku).map(t => ({ min: t.min_qty, price: t.unit_price, gst: t.gst === undefined ? '' : t.gst })).sort((a, b) => a.min - b.min); }
 function tierFor(sku, qty) { let price = 0; tiersOf(sku).forEach(t => { if (qty >= t.min) price = t.price; }); return price || (tiersOf(sku)[0] || {}).price || 0; }
 function atp(p) { return Math.max(0, p.on_hand - p.reserved - p.safety_stock); }
 function pub(p) {
@@ -190,7 +198,7 @@ const ACTIONS = {
       visible: d.visible ? 'TRUE' : 'FALSE', show_price: d.show_price ? 'TRUE' : 'FALSE'
     });
     db.tiers = db.tiers.filter(t => t.sku !== d.sku)
-      .concat((d.tiers || []).map(t => ({ sku: d.sku, min_qty: t.min, unit_price: t.price })));
+      .concat((d.tiers || []).map(t => ({ sku: d.sku, min_qty: t.min, unit_price: t.price, gst: t.gst === undefined ? '' : t.gst })));
     return { ok: true, sku: d.sku };
   },
   adminProductDelete: b => { const p = prodOf(b.sku); if (!p) return { ok: false, error: 'Not found' }; p.visible = 'FALSE'; return { ok: true }; },
@@ -222,40 +230,71 @@ const ACTIONS = {
     Object.assign(u, { name: d.name || '', company: d.company || '', active: d.active !== false });
     return { ok: true, email: u.email };
   },
-  adminAnalytics: () => {
-    const wins = [30, 60, 90], DAY = 864e5, nowMs = Date.now();
+  adminAnalytics: b => {
+    const days = Number(b.days) || 90, DAY = 864e5, nowMs = Date.now(), cutoff = nowMs - days * DAY;
     const names = Object.fromEntries(db.products.map(p => [p.sku, p.name]));
-    const clicks = {}, demand = {};
-    db.events.forEach(ev => {
-      if (ev.type !== 'view' && ev.type !== 'click') return;
-      const age = (nowMs - new Date(ev.date).getTime()) / DAY;
-      wins.forEach(w => {
-        if (age <= w) { clicks[ev.sku] = clicks[ev.sku] || { 30: 0, 60: 0, 90: 0 }; clicks[ev.sku][w] += ev.count; }
-      });
+    const inWin = db.requests.filter(r => new Date(r.created).getTime() >= cutoff);
+    const byStatus = {}; let value = 0;
+    inWin.forEach(r => { byStatus[r.status] = (byStatus[r.status] || 0) + 1; value += r.total_est; });
+    let converted = 0, decided = 0, awaiting = 0, awaitingOld = 0;
+    inWin.forEach(r => {
+      const conv = ['Confirmed','Dispatched','Closed'].includes(r.status);
+      const dead = ['Rejected','Expired'].includes(r.status);
+      if (conv) converted++; if (conv || dead) decided++;
+      if (r.status === 'New' || r.status === 'Under Review') { awaiting++; if (nowMs - new Date(r.created) > 3*DAY) awaitingOld++; }
     });
+    const weeks = {};
+    inWin.forEach(r => {
+      const d = new Date(r.created); const mon = new Date(d - ((d.getDay()+6)%7)*DAY);
+      const k = mon.toISOString().slice(0,10);
+      weeks[k] = weeks[k] || { requests: 0, value: 0 };
+      weeks[k].requests++; weeks[k].value += r.total_est;
+    });
+    const trend = Object.keys(weeks).sort().map(k => ({ week: new Date(k).toLocaleDateString('en-IN',{day:'numeric',month:'short'}), requests: weeks[k].requests, value: Math.round(weeks[k].value) }));
+    const units = {}, lineValue = {}, ever = {};
     db.lines.forEach(l => {
+      ever[l.sku] = 1;
       const r = db.requests.find(x => x.request_id === l.request_id);
-      if (!r) return;
-      const age = (nowMs - new Date(r.created).getTime()) / DAY;
-      wins.forEach(w => {
-        if (age <= w) {
-          demand[l.sku] = demand[l.sku] || { 30: { qty: 0, reqs: 0 }, 60: { qty: 0, reqs: 0 }, 90: { qty: 0, reqs: 0 } };
-          demand[l.sku][w].qty += l.qty; demand[l.sku][w].reqs += 1;
-        }
-      });
+      if (!r || new Date(r.created).getTime() < cutoff) return;
+      units[l.sku] = (units[l.sku]||0) + l.qty; lineValue[l.sku] = (lineValue[l.sku]||0) + l.line_total;
     });
-    const top = (obj, key, w) => Object.keys(obj)
-      .map(sku => ({ sku, name: names[sku] || sku, value: key ? obj[sku][w][key] : obj[sku][w], reqs: key ? obj[sku][w].reqs : undefined }))
-      .filter(x => x.value > 0).sort((a, b) => b.value - a.value).slice(0, 15);
-    const funnel = {};
-    db.requests.forEach(r => { funnel[r.status] = (funnel[r.status] || 0) + 1; });
-    return {
-      ok: true,
-      top_clicked: { 30: top(clicks, null, 30), 60: top(clicks, null, 60), 90: top(clicks, null, 90) },
-      top_requested: { 30: top(demand, 'qty', 30), 60: top(demand, 'qty', 60), 90: top(demand, 'qty', 90) },
-      funnel, requests_per_day: {}
-    };
+    const top = obj => Object.keys(obj).map(sku => ({ sku, name: names[sku]||sku, value: obj[sku] })).sort((a,b)=>b.value-a.value).slice(0,8);
+    const never = db.products.filter(p => p.visible === 'TRUE' && !ever[p.sku]).map(p => ({ sku: p.sku, name: p.name, category: p.category, moq: p.moq }));
+    let views = 0, clicks = 0; const viewed = {}, searches = {}, searchesNil = {};
+    db.events.forEach(ev => {
+      if (new Date(ev.date).getTime() < cutoff) return;
+      if (ev.type === 'view') { views += ev.count; viewed[ev.sku] = (viewed[ev.sku]||0)+ev.count; }
+      if (ev.type === 'click') clicks += ev.count;
+      if (ev.type === 'search') searches[ev.sku] = (searches[ev.sku]||0)+ev.count;
+      if (ev.type === 'search_nil') searchesNil[ev.sku] = (searchesNil[ev.sku]||0)+ev.count;
+    });
+    const topKeys = obj => Object.keys(obj).map(k => ({ key: k, count: obj[k] })).sort((a,b)=>b.count-a.count).slice(0,10);
+    return { ok: true,
+      generated_at: new Date().toLocaleString('en-IN'), days,
+      requests: { count: inWin.length, value: Math.round(value), average: inWin.length ? Math.round(value/inWin.length) : 0, by_status: byStatus },
+      decision: { conversion_rate: decided ? Math.round(converted/decided*100) : null, median_hours_to_quote: 26.4, median_days_to_close: 9.5, awaiting, awaiting_over_3_days: awaitingOld },
+      trend,
+      products: { top_by_units: top(units), top_by_value: top(lineValue), never_requested: never.slice(0,25), never_requested_total: never.length, catalogue_size: db.products.filter(p=>p.visible==='TRUE').length },
+      traffic: { product_views: views, add_to_list: clicks, requests_submitted: inWin.length,
+        funnel: [ {step:'Product views',n:views},{step:'Added to request list',n:clicks},{step:'Requests submitted',n:inWin.length},{step:'Confirmed',n:(byStatus.Confirmed||0)+(byStatus.Dispatched||0)+(byStatus.Closed||0)} ],
+        top_viewed: topKeys(viewed).map(r => ({ sku: r.key, name: names[r.key]||r.key, count: r.count })),
+        top_searches: topKeys(searches), searches_with_nothing: topKeys(searchesNil) } };
   },
+  adminSyncPreview: b => (String(b.sheet||'').length > 5
+    ? { ok: true, sheet_id: 'mock-sheet-id', tabs: ['Stock','Prices'], tab: 'Stock',
+        headers: ['Item Code','Product Name','Warehouse Qty','Rate'],
+        sample: [['URBAN-294','Ebony Bottle','2600','824'],['UG 02','Eco Cork Mug','3900','200'],['B30906','Adidas Polo','450','1199']],
+        rows: 22, owner_hint: 'merchforce-backend@companystore.io' }
+    : { ok: false, error: 'Paste the supplier sheet link or ID' }),
+  adminSyncRun: b => {
+    Object.assign(db.settings, { sync_sheet_id: b.sheet || db.settings.sync_sheet_id || 'mock-sheet-id',
+      sync_tab: b.tab || 'Stock', sync_sku_col: b.sku_col || db.settings.sync_sku_col || 'Item Code',
+      sync_stock_col: b.stock_col || db.settings.sync_stock_col || 'Warehouse Qty' });
+    const summary = { ok: true, ts: new Date().toString(), matched: 20, updated: 6, unchanged: 14, unknown: 2, unknown_skus: ['OLD-001','OLD-002'], error: null };
+    db.settings.sync_last = JSON.stringify(summary);
+    return summary;
+  },
+  adminSyncSchedule: b => { db.settings.sync_auto = b.mode === 'hourly' ? 'hourly' : 'off'; return { ok: true, mode: db.settings.sync_auto }; },
   adminSettings: b => { if (b.save) Object.assign(db.settings, b.save); return { ok: true, settings: db.settings }; },
   adminExportCsv: b => ({ ok: true, filename: 'mock.csv', csv: 'sku,name\n' + db.products.map(p => p.sku + ',' + JSON.stringify(p.name)).join('\n') })
 };

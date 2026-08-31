@@ -1,4 +1,4 @@
-/* Merchforce admin console */
+/* Merchforce admin console — RSM-style */
 'use strict';
 
 var CONFIG = {
@@ -11,11 +11,12 @@ var CONFIG = {
 var A = {
   key: '', settings: null,
   requests: [], products: [], brands: [], users: [], analytics: null,
-  win: 30, loaded: {}
+  days: 90, loaded: {}, syncPreview: null
 };
 
 var STATUSES = ['New', 'Under Review', 'Quoted', 'Confirmed', 'Dispatched', 'Closed', 'Rejected', 'Expired'];
 
+/* ---------- plumbing ---------- */
 function $(id) { return document.getElementById(id); }
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -23,6 +24,7 @@ function esc(s) {
   });
 }
 function inr(n) { return '₹' + Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 }); }
+function qty(n) { return Number(n || 0).toLocaleString('en-IN'); }
 function toast(msg) {
   var t = $('toast'); t.textContent = msg; t.hidden = false;
   clearTimeout(t._h); t._h = setTimeout(function () { t.hidden = true; }, 2600);
@@ -49,6 +51,14 @@ function fmtDate(d) {
   return isNaN(x) ? esc(String(d)) : x.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) +
     ' ' + x.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 }
+function imgOf(sku) {
+  var p = A.products.filter(function (x) { return x.sku === sku; })[0];
+  return p && p.images[0] ? p.images[0] : '';
+}
+function brandName(id) {
+  var b = A.brands.filter(function (x) { return x.id === id; })[0];
+  return b ? b.name : (id || '—');
+}
 
 /* ---------- unlock ---------- */
 function unlock() {
@@ -70,11 +80,11 @@ $('unlockBtn').onclick = unlock;
 $('adminKey').addEventListener('keydown', function (e) { if (e.key === 'Enter') unlock(); });
 $('lockNow').onclick = function () { location.reload(); };
 
-/* ---------- tabs (lazy loaders, one call per open — GAS serialises) ---------- */
+/* ---------- tabs ---------- */
 var LOADERS = { requests: loadRequests, catalog: loadCatalog, brands: loadCatalog, users: loadUsers, analytics: loadAnalytics, settings: renderSettings };
-document.querySelectorAll('.tab').forEach(function (t) {
+document.querySelectorAll('#tabs .chip').forEach(function (t) {
   t.onclick = function () {
-    document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('on'); });
+    document.querySelectorAll('#tabs .chip').forEach(function (x) { x.classList.remove('on'); });
     t.classList.add('on');
     document.querySelectorAll('.panel').forEach(function (p) { p.hidden = true; });
     var name = t.dataset.t;
@@ -93,23 +103,24 @@ function loadRequests() {
   }).catch(function (e) { $('p-requests').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
 }
 
+function stat(v, l) { return '<div class="stat"><div class="stat-n">' + v + '</div><div class="stat-l">' + l + '</div></div>'; }
+
 function renderRequests() {
   var open = A.requests.filter(function (r) { return ['Closed', 'Rejected', 'Expired'].indexOf(r.status) < 0; });
-  var html =
-    '<div class="kpis">' +
-      kpi(A.requests.filter(function (r) { return r.status === 'New'; }).length, 'New') +
-      kpi(open.length, 'Open pipeline') +
-      kpi(A.requests.filter(function (r) { return r.status === 'Confirmed'; }).length, 'Confirmed') +
-      kpi(inr(open.reduce(function (s, r) { return s + r.total_est; }, 0)), 'Open value (est)') +
+  $('p-requests').innerHTML =
+    '<div class="stat-row">' +
+      stat(A.requests.filter(function (r) { return r.status === 'New'; }).length, 'New') +
+      stat(open.length, 'Open pipeline') +
+      stat(A.requests.filter(function (r) { return r.status === 'Confirmed'; }).length, 'Confirmed') +
+      stat(inr(open.reduce(function (s, r) { return s + r.total_est; }, 0)), 'Open value (est)') +
     '</div>' +
     '<div class="panel-head"><h2>Requests</h2><span class="sp"></span>' +
-      '<select id="rFilter"><option value="">All statuses</option>' +
+      '<select id="rFilter" style="padding:8px 12px;border:1px solid var(--line);border-radius:10px"><option value="">All statuses</option>' +
       STATUSES.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select>' +
       '<button class="btn small" id="rReload">Refresh</button></div>' +
-    '<div class="table-wrap"><table class="data"><thead><tr>' +
-      '<th>ID</th><th>Created</th><th>Company</th><th>Lines</th><th>Est. value</th><th>Status</th>' +
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+      '<th>ID</th><th>Created</th><th>Company</th><th class="num">Lines</th><th class="num">Est. value</th><th>Status</th>' +
     '</tr></thead><tbody id="rRows"></tbody></table></div>';
-  $('p-requests').innerHTML = html;
   $('rReload').onclick = loadRequests;
   $('rFilter').onchange = paintRequestRows;
   paintRequestRows();
@@ -125,16 +136,14 @@ function paintRequestRows() {
     tr.className = 'click';
     tr.innerHTML = '<td><b>' + esc(r.id) + '</b></td><td>' + fmtDate(r.created) + '</td>' +
       '<td>' + esc(r.company) + '<br><small style="color:var(--ink-3)">' + esc(r.contact) + '</small></td>' +
-      '<td>' + r.lines.length + '</td><td>' + inr(r.total_est) + '</td><td>' + statusPill(r.status) + '</td>';
+      '<td class="num">' + r.lines.length + '</td><td class="num">' + inr(r.total_est) + '</td><td>' + statusPill(r.status) + '</td>';
     tr.onclick = function () { openRequest(r); };
     tb.appendChild(tr);
   });
 }
 
-function kpi(v, l) { return '<div class="kpi"><div class="v">' + v + '</div><div class="l">' + l + '</div></div>'; }
-
 function openRequest(r) {
-  var html =
+  openDrawer(
     '<h2 style="margin:0 0 2px">' + esc(r.id) + ' ' + statusPill(r.status) + '</h2>' +
     '<p style="color:var(--ink-3);margin:0 0 14px;font-size:13.5px">' + fmtDate(r.created) + '</p>' +
     '<div class="two-col" style="margin-bottom:14px">' +
@@ -145,14 +154,14 @@ function openRequest(r) {
       '<div class="card-block"><h3>Buyer notes</h3><div style="font-size:13.5px;color:var(--ink-2)">' +
         (esc(r.notes) || '—') + '</div></div>' +
     '</div>' +
-    '<div class="table-wrap" style="margin-bottom:14px"><table class="data"><thead>' +
-      '<tr><th>SKU</th><th>Product</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead><tbody>' +
+    '<div class="tbl-wrap" style="margin-bottom:14px"><table class="tbl"><thead>' +
+      '<tr><th>SKU</th><th>Product</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th></tr></thead><tbody>' +
       r.lines.map(function (l) {
-        return '<tr><td>' + esc(l.sku) + '</td><td>' + esc(l.name) + '</td><td>' + l.qty +
-          '</td><td>' + inr(l.unit_price) + '</td><td>' + inr(l.line_total) + '</td></tr>';
+        return '<tr><td>' + esc(l.sku) + '</td><td>' + esc(l.name) + '</td><td class="num">' + qty(l.qty) +
+          '</td><td class="num">' + inr(l.unit_price) + '</td><td class="num">' + inr(l.line_total) + '</td></tr>';
       }).join('') +
       '<tr><td colspan="4" style="text-align:right;font-weight:800">Estimated total</td>' +
-      '<td style="font-weight:800">' + inr(r.total_est) + '</td></tr>' +
+      '<td class="num" style="font-weight:800">' + inr(r.total_est) + '</td></tr>' +
     '</tbody></table></div>' +
     '<div class="field"><label>Internal notes</label><textarea id="mNotes">' + esc(r.admin_notes || '') + '</textarea></div>' +
     '<div class="field"><label>Status</label><select id="mStatus">' +
@@ -161,13 +170,12 @@ function openRequest(r) {
     '<p class="note">Confirmed reserves stock (checked against ATP — first confirmed wins). ' +
       'Dispatched consumes it. Rejecting or expiring a confirmed request releases the reservation.</p>' +
     '<div class="form-err" id="mErr"></div>' +
-    '<button class="btn primary" id="mSave" style="width:100%;justify-content:center">Save</button>';
-  openModal(html);
+    '<button class="btn primary" id="mSave" style="width:100%;justify-content:center">Save</button>');
   $('mSave').onclick = function () {
     $('mSave').disabled = true;
     $('mErr').textContent = '';
     api('adminRequestUpdate', { id: r.id, status: $('mStatus').value, admin_notes: $('mNotes').value })
-      .then(function () { closeModal(); toast(r.id + ' saved'); loadRequests(); })
+      .then(function () { closeDrawer(); toast(r.id + ' saved'); loadRequests(); })
       .catch(function (e) { $('mErr').textContent = e.message; $('mSave').disabled = false; });
   };
 }
@@ -177,7 +185,7 @@ function loadCatalog() {
   A.loaded.catalog = A.loaded.brands = true;
   $('p-catalog').innerHTML = '<div class="spin"></div>';
   $('p-brands').innerHTML = '<div class="spin"></div>';
-  api('adminCatalog').then(function (res) {
+  return api('adminCatalog').then(function (res) {
     A.products = res.products;
     A.brands = res.brands;
     renderCatalog();
@@ -190,17 +198,17 @@ function loadCatalog() {
 function renderCatalog() {
   var lowCount = A.products.filter(function (p) { return p.atp <= p.reorder_point; }).length;
   $('p-catalog').innerHTML =
-    '<div class="kpis">' +
-      kpi(A.products.length, 'Products') +
-      kpi(A.products.filter(function (p) { return p.visible; }).length, 'Published') +
-      kpi(lowCount, 'At / below reorder point') +
+    '<div class="stat-row">' +
+      stat(A.products.length, 'Products') +
+      stat(A.products.filter(function (p) { return p.visible; }).length, 'Published') +
+      stat(lowCount, 'At / below reorder point') +
     '</div>' +
     '<div class="panel-head"><h2>Catalog</h2><span class="sp"></span>' +
       '<input id="cSearch" placeholder="Search…" style="padding:8px 12px;border:1px solid var(--line);border-radius:10px">' +
       '<button class="btn small" id="cExport">Export CSV</button>' +
       '<button class="btn primary small" id="cNew">+ Product</button></div>' +
-    '<div class="table-wrap"><table class="data"><thead><tr>' +
-      '<th>SKU</th><th>Product</th><th>Brand</th><th>MOQ</th><th>On hand</th><th>Reserved</th><th>ATP</th><th>Visible</th>' +
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+      '<th></th><th>SKU</th><th>Product</th><th>Brand</th><th class="num">MOQ</th><th class="num">From</th><th class="num">On hand</th><th class="num">Reserved</th><th class="num">ATP</th><th>Visible</th>' +
     '</tr></thead><tbody id="cRows"></tbody></table></div>';
   $('cNew').onclick = function () { editProduct(null); };
   $('cExport').onclick = exportProducts;
@@ -216,30 +224,34 @@ function paintCatalogRows() {
     return !q || (p.sku + ' ' + p.name + ' ' + p.brand_id + ' ' + p.category).toLowerCase().indexOf(q) >= 0;
   }).forEach(function (p) {
     var low = p.atp <= p.reorder_point;
+    var from = p.tiers.length ? p.tiers[p.tiers.length - 1].price : 0;
     var tr = document.createElement('tr');
     tr.className = 'click';
-    tr.innerHTML = '<td>' + esc(p.sku) + '</td>' +
+    tr.innerHTML =
+      '<td>' + (p.images[0] ? '<img class="prod-img" style="width:38px;height:38px" src="' + esc(p.images[0]) + '">' : '') + '</td>' +
+      '<td>' + esc(p.sku) + '</td>' +
       '<td><b>' + esc(p.name) + '</b><br><small style="color:var(--ink-3)">' + esc(p.category) + '</small></td>' +
-      '<td>' + esc(brandName(p.brand_id)) + '</td><td>' + p.moq + '</td>' +
-      '<td>' + p.on_hand + '</td><td>' + p.reserved + '</td>' +
-      '<td style="font-weight:800;color:' + (low ? 'var(--bad)' : 'inherit') + '">' + p.atp + (low ? ' ⚠' : '') + '</td>' +
+      '<td>' + esc(brandName(p.brand_id)) + '</td><td class="num">' + p.moq + '</td>' +
+      '<td class="num">' + (from ? inr(from) : '—') + '</td>' +
+      '<td class="num">' + qty(p.on_hand) + '</td><td class="num">' + qty(p.reserved) + '</td>' +
+      '<td class="num" style="font-weight:800;color:' + (low ? 'var(--bad)' : 'inherit') + '">' + qty(p.atp) + (low ? ' ⚠' : '') + '</td>' +
       '<td>' + (p.visible ? '✓' : '—') + '</td>';
     tr.onclick = function () { editProduct(p); };
     tb.appendChild(tr);
   });
 }
 
-function brandName(id) {
-  var b = A.brands.filter(function (x) { return x.id === id; })[0];
-  return b ? b.name : (id || '—');
-}
-
+/* Product editor — RSM-style tier rows: min qty @ price, per-tier GST (blank inherits) */
 function editProduct(p) {
   var isNew = !p;
   p = p || { sku: '', name: '', brand_id: '', category: '', subcategory: '', description: '', specs: '',
-             images: [], moq: 25, gst_rate: 18, lead_time: '', on_hand: 0, reserved: 0,
-             safety_stock: 0, reorder_point: 0, visible: true, show_price: true, tiers: [] };
-  var html =
+             images: [], moq: 1, gst_rate: 18, lead_time: '', on_hand: 0, reserved: 0,
+             safety_stock: 0, reorder_point: 0, visible: true, show_price: true,
+             tiers: [{ min: 1, price: 0, gst: '' }] };
+  var draft = JSON.parse(JSON.stringify(p));
+  if (!draft.tiers.length) draft.tiers = [{ min: draft.moq || 1, price: 0, gst: '' }];
+
+  openDrawer(
     '<h2 style="margin:0 0 14px">' + (isNew ? 'New product' : esc(p.sku)) + '</h2>' +
     '<div class="f2">' +
       '<div class="field"><label>SKU *</label><input id="eSku" value="' + esc(p.sku) + '"' + (isNew ? '' : ' readonly') + '></div>' +
@@ -257,19 +269,20 @@ function editProduct(p) {
       esc(String(p.specs || '').split('|').join('\n')) + '</textarea></div>' +
     '<div class="field"><label>Images</label>' +
       '<div id="eImgs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"></div>' +
-      '<input id="eFile" type="file" accept="image/*"></div>' +
+      '<input id="eFile" type="file" accept="image/*" multiple></div>' +
     '<div class="f2">' +
-      '<div class="field"><label>MOQ</label><input id="eMoq" type="number" value="' + p.moq + '"></div>' +
-      '<div class="field"><label>GST %</label><input id="eGst" type="number" value="' + p.gst_rate + '"></div>' +
+      '<div class="field"><label>MOQ (1 = no minimum)</label><input id="eMoq" type="number" min="1" value="' + draft.moq + '"></div>' +
+      '<div class="field"><label>Product GST %</label><input id="eGst" type="number" min="0" step="0.01" value="' + draft.gst_rate + '"></div>' +
       '<div class="field"><label>Lead time</label><input id="eLead" value="' + esc(p.lead_time) + '"></div>' +
       '<div class="field"><label>On hand</label><input id="eOnHand" type="number" value="' + p.on_hand + '"></div>' +
       '<div class="field"><label>Safety stock</label><input id="eSafety" type="number" value="' + p.safety_stock + '"></div>' +
       '<div class="field"><label>Reorder point</label><input id="eReorder" type="number" value="' + p.reorder_point + '"></div>' +
     '</div>' +
     (isNew ? '' : '<p class="note">Reserved: ' + p.reserved + ' (owned by the request lifecycle) · ATP: ' + p.atp + '</p>') +
-    '<div class="field"><label>Price tiers (min qty : unit price, one per line)</label><textarea id="eTiers">' +
-      p.tiers.map(function (t) { return t.min + ' : ' + t.price; }).join('\n') + '</textarea></div>' +
-    '<div class="f2">' +
+    '<h3 style="margin:16px 0 4px">Price tiers</h3>' +
+    '<p class="note" style="margin:0 0 10px">The first tier must start at the MOQ. GST left blank uses the product rate — set it per tier only when volume crosses a slab.</p>' +
+    '<div id="tierBox"></div>' +
+    '<div class="f2" style="margin-top:12px">' +
       '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px"><input id="eVisible" type="checkbox"' + (p.visible ? ' checked' : '') + '> Visible on storefront</label>' +
       '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px"><input id="eShowPrice" type="checkbox"' + (p.show_price ? ' checked' : '') + '> Show prices</label>' +
     '</div>' +
@@ -277,13 +290,48 @@ function editProduct(p) {
     '<div style="display:flex;gap:10px;margin-top:6px">' +
       (isNew ? '' : '<button class="btn danger" id="eHide">Hide from store</button>') +
       '<button class="btn primary" id="eSave" style="flex:1;justify-content:center">Save product</button>' +
-    '</div>';
-  openModal(html);
+    '</div>');
+
+  function paintTiers() {
+    var box = $('tierBox');
+    box.innerHTML = '';
+    draft.tiers.forEach(function (t, i) {
+      var row = document.createElement('div');
+      row.className = 'tier-row';
+      row.innerHTML =
+        'From <input type="number" min="1" style="width:90px" data-k="min" data-i="' + i + '" value="' + t.min + '"> units' +
+        ' @ ₹ <input type="number" min="0" step="0.01" style="width:110px" data-k="price" data-i="' + i + '" value="' + t.price + '">' +
+        ' GST <input type="number" min="0" step="0.01" style="width:70px" placeholder="' + draft.gst_rate + '" title="Leave blank to use the product rate" data-k="gst" data-i="' + i + '" value="' + (t.gst === '' || t.gst === null || t.gst === undefined ? '' : t.gst) + '"> %' +
+        ' <button type="button" class="btn ghost small" data-rm="' + i + '">Remove</button>';
+      box.appendChild(row);
+    });
+    var add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'btn small';
+    add.textContent = '+ Add tier';
+    add.onclick = function () {
+      var last = draft.tiers[draft.tiers.length - 1];
+      draft.tiers.push({ min: last ? Number(last.min) * 2 : (Number($('eMoq').value) || 1),
+                         price: last ? last.price : 0, gst: last ? last.gst : '' });
+      paintTiers();
+    };
+    box.appendChild(add);
+    box.querySelectorAll('input[data-k]').forEach(function (inp) {
+      inp.oninput = function () {
+        var t = draft.tiers[Number(inp.dataset.i)];
+        t[inp.dataset.k] = inp.value === '' ? '' : Number(inp.value);
+      };
+    });
+    box.querySelectorAll('button[data-rm]').forEach(function (b) {
+      b.onclick = function () { draft.tiers.splice(Number(b.dataset.rm), 1); paintTiers(); };
+    });
+  }
+  paintTiers();
 
   var images = p.images.slice();
   function paintImgs() {
     $('eImgs').innerHTML = images.map(function (u, i) {
-      return '<span style="position:relative"><img src="' + esc(u) + '" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line)">' +
+      return '<span style="position:relative"><img src="' + esc(u) + '" style="width:64px;height:64px;object-fit:contain;background:var(--bg);border-radius:8px;border:1px solid var(--line)">' +
         '<button data-i="' + i + '" style="position:absolute;top:-6px;right:-6px;border:none;background:var(--bad);color:#fff;border-radius:999px;width:20px;height:20px;font-size:11px;cursor:pointer">✕</button></span>';
     }).join('');
     $('eImgs').querySelectorAll('button').forEach(function (b) {
@@ -292,38 +340,42 @@ function editProduct(p) {
   }
   paintImgs();
   $('eFile').onchange = function () {
-    var f = this.files[0];
-    if (!f) return;
-    if (f.size > 4 * 1024 * 1024) { $('mErr').textContent = 'Image over 4MB'; return; }
-    var rd = new FileReader();
-    rd.onload = function () {
-      $('mErr').textContent = 'Uploading image…';
-      api('adminImageUpload', { data: rd.result, filename: f.name, mime: f.type })
-        .then(function (res) { images.push(res.url); paintImgs(); $('mErr').textContent = ''; })
-        .catch(function (e) { $('mErr').textContent = e.message; });
-    };
-    rd.readAsDataURL(f);
+    Array.prototype.slice.call(this.files).forEach(function (f) {
+      if (f.size > 4 * 1024 * 1024) { $('mErr').textContent = f.name + ' is over 4MB'; return; }
+      var rd = new FileReader();
+      rd.onload = function () {
+        $('mErr').textContent = 'Uploading ' + f.name + '…';
+        api('adminImageUpload', { data: rd.result, filename: f.name, mime: f.type })
+          .then(function (res) { images.push(res.url); paintImgs(); $('mErr').textContent = ''; })
+          .catch(function (e) { $('mErr').textContent = e.message; });
+      };
+      rd.readAsDataURL(f);
+    });
   };
 
   if (!isNew) {
     $('eHide').onclick = function () {
       api('adminProductDelete', { sku: p.sku })
-        .then(function () { closeModal(); toast('Hidden'); loadCatalog(); })
+        .then(function () { closeDrawer(); toast('Hidden'); loadCatalog(); })
         .catch(function (e) { $('mErr').textContent = e.message; });
     };
   }
   $('eSave').onclick = function () {
-    var tiers = $('eTiers').value.split('\n').map(function (l) {
-      var kv = l.split(':');
-      return { min: Number(kv[0]), price: Number(kv[1]) };
-    }).filter(function (t) { return t.min > 0 && t.price > 0; });
+    var tiers = draft.tiers.filter(function (t) { return Number(t.min) > 0 && Number(t.price) >= 0; })
+      .map(function (t) { return { min: Number(t.min), price: Number(t.price), gst: t.gst === '' ? '' : Number(t.gst) }; })
+      .sort(function (a, b) { return a.min - b.min; });
+    var moq = Number($('eMoq').value) || 1;
+    if (tiers.length && tiers[0].min !== moq) {
+      $('mErr').textContent = 'The first tier must start at the MOQ (' + moq + ').';
+      return;
+    }
     var payload = {
       sku: $('eSku').value.trim(), name: $('eName').value.trim(),
       brand_id: $('eBrand').value, category: $('eCat').value.trim(), subcategory: $('eSub').value.trim(),
       description: $('eDesc').value.trim(),
       specs: $('eSpecs').value.split('\n').map(function (s) { return s.trim(); }).filter(String).join('|'),
       images: images,
-      moq: Number($('eMoq').value), gst_rate: Number($('eGst').value), lead_time: $('eLead').value.trim(),
+      moq: moq, gst_rate: Number($('eGst').value), lead_time: $('eLead').value.trim(),
       on_hand: Number($('eOnHand').value), safety_stock: Number($('eSafety').value),
       reorder_point: Number($('eReorder').value),
       visible: $('eVisible').checked, show_price: $('eShowPrice').checked,
@@ -332,7 +384,7 @@ function editProduct(p) {
     if (!payload.sku || !payload.name) { $('mErr').textContent = 'SKU and name are required.'; return; }
     $('eSave').disabled = true;
     api('adminProductSave', { product: payload })
-      .then(function () { closeModal(); toast(payload.sku + ' saved'); loadCatalog(); })
+      .then(function () { closeDrawer(); toast(payload.sku + ' saved'); loadCatalog(); })
       .catch(function (e) { $('mErr').textContent = e.message; $('eSave').disabled = false; });
   };
 }
@@ -351,8 +403,8 @@ function renderBrands() {
   $('p-brands').innerHTML =
     '<div class="panel-head"><h2>Brands</h2><span class="sp"></span>' +
       '<button class="btn primary small" id="bNew">+ Brand</button></div>' +
-    '<div class="table-wrap"><table class="data"><thead><tr>' +
-      '<th>Logo</th><th>Name</th><th>Products</th><th>Active</th><th>Sort</th>' +
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+      '<th>Logo</th><th>Name</th><th class="num">Products</th><th>Active</th><th class="num">Sort</th>' +
     '</tr></thead><tbody id="bRows"></tbody></table></div>';
   $('bNew').onclick = function () { editBrand(null); };
   var tb = $('bRows');
@@ -362,9 +414,9 @@ function renderBrands() {
     tr.className = 'click';
     tr.innerHTML =
       '<td>' + (b.logo ? '<img src="' + esc(b.logo) + '" style="width:36px;height:36px;border-radius:999px;object-fit:cover">' :
-        '<span class="brand-dot" style="width:36px;height:36px;border-radius:999px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:800">' + esc(b.name.charAt(0)) + '</span>') + '</td>' +
+        '<span style="width:36px;height:36px;border-radius:999px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:800">' + esc(b.name.charAt(0)) + '</span>') + '</td>' +
       '<td><b>' + esc(b.name) + '</b><br><small style="color:var(--ink-3)">' + esc(b.desc || '') + '</small></td>' +
-      '<td>' + count + '</td><td>' + (b.active ? '✓' : '—') + '</td><td>' + b.sort + '</td>';
+      '<td class="num">' + count + '</td><td>' + (b.active ? '✓' : '—') + '</td><td class="num">' + b.sort + '</td>';
     tr.onclick = function () { editBrand(b); };
     tb.appendChild(tr);
   });
@@ -373,7 +425,7 @@ function renderBrands() {
 function editBrand(b) {
   var isNew = !b;
   b = b || { id: '', name: '', logo: '', desc: '', active: true, sort: A.brands.length + 1 };
-  openModal(
+  openDrawer(
     '<h2 style="margin:0 0 14px">' + (isNew ? 'New brand' : esc(b.name)) + '</h2>' +
     '<div class="field"><label>Name *</label><input id="bName" value="' + esc(b.name) + '"></div>' +
     '<div class="field"><label>Description</label><input id="bDesc" value="' + esc(b.desc) + '"></div>' +
@@ -409,13 +461,13 @@ function editBrand(b) {
   if (!isNew) {
     $('bDel').onclick = function () {
       api('adminBrandDelete', { id: b.id })
-        .then(function () { closeModal(); toast('Deleted'); loadCatalog(); })
+        .then(function () { closeDrawer(); toast('Deleted'); loadCatalog(); })
         .catch(function (e) { $('mErr').textContent = e.message; });
     };
   }
   $('bSave').onclick = function () {
     api('adminBrandSave', { brand: { id: b.id, name: $('bName').value.trim(), desc: $('bDesc').value.trim(), logo: logo, sort: Number($('bSort').value), active: $('bActive').checked } })
-      .then(function () { closeModal(); toast('Brand saved'); loadCatalog(); })
+      .then(function () { closeDrawer(); toast('Brand saved'); loadCatalog(); })
       .catch(function (e) { $('mErr').textContent = e.message; });
   };
 }
@@ -436,7 +488,7 @@ function renderUsers() {
       '<span class="pill" style="background:var(--accent-soft);color:var(--accent)">Access mode: ' + esc(A.settings.access_mode) + '</span>' +
       '<span class="sp"></span><button class="btn primary small" id="uNew">+ User</button></div>' +
     '<p class="note" style="margin-top:-6px">Accounts matter only in gated mode. In open mode anyone can browse and request; switch the mode under Settings.</p>' +
-    '<div class="table-wrap"><table class="data"><thead><tr>' +
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
       '<th>Email</th><th>Name</th><th>Company</th><th>Active</th><th>Last login</th>' +
     '</tr></thead><tbody id="uRows"></tbody></table></div>';
   $('uNew').onclick = function () { editUser(null); };
@@ -455,7 +507,7 @@ function renderUsers() {
 function editUser(u) {
   var isNew = !u;
   u = u || { email: '', name: '', company: '', active: true };
-  openModal(
+  openDrawer(
     '<h2 style="margin:0 0 14px">' + (isNew ? 'New buyer account' : esc(u.email)) + '</h2>' +
     '<div class="field"><label>Email *</label><input id="uEmail" value="' + esc(u.email) + '"' + (isNew ? '' : ' readonly') + '></div>' +
     '<div class="f2">' +
@@ -468,60 +520,163 @@ function editUser(u) {
     '<button class="btn primary" id="uSave" style="width:100%;justify-content:center">Save user</button>');
   $('uSave').onclick = function () {
     api('adminUserSave', { user: { email: $('uEmail').value.trim(), name: $('uName').value.trim(), company: $('uCompany').value.trim(), password: $('uPass').value, active: $('uActive').checked } })
-      .then(function () { closeModal(); toast('User saved'); loadUsers(); })
+      .then(function () { closeDrawer(); toast('User saved'); loadUsers(); })
       .catch(function (e) { $('mErr').textContent = e.message; });
   };
 }
 
-/* ================= ANALYTICS ================= */
+/* ================= ANALYTICS (RSM-style) ================= */
 function loadAnalytics() {
   A.loaded.analytics = true;
   $('p-analytics').innerHTML = '<div class="spin"></div>';
-  api('adminAnalytics').then(function (res) {
+  var ensureCatalog = A.products.length ? Promise.resolve() : api('adminCatalog').then(function (res) {
+    A.products = res.products; A.brands = res.brands;
+  });
+  ensureCatalog.then(function () {
+    return api('adminAnalytics', { days: A.days });
+  }).then(function (res) {
     A.analytics = res;
     renderAnalytics();
   }).catch(function (e) { $('p-analytics').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
 }
 
+function section(title, note) {
+  return '<div class="section-head"><h2>' + title + '</h2>' +
+    (note ? '<div class="note-sub">' + note + '</div>' : '') + '</div>';
+}
+function card2(title, body, note) {
+  return '<div class="panel2"><h3>' + title + '</h3>' +
+    (note ? '<p class="note-sub">' + note + '</p>' : '') + body + '</div>';
+}
+function barList(rows, fmt) {
+  if (!rows || !rows.length) return '<div class="empty" style="padding:18px 0">Nothing yet</div>';
+  var max = Math.max.apply(null, rows.map(function (r) { return r.count; }));
+  return '<div class="bars">' + rows.map(function (r) {
+    return '<div class="brow"><span class="blabel" title="' + esc(r.key) + '">' + esc(r.key) + '</span>' +
+      '<span class="bar-track"><span class="bar-fill" style="display:block;width:' + Math.max(2, Math.round(r.count / max * 100)) + '%"></span></span>' +
+      '<span class="bval">' + (fmt || qty)(r.count) + '</span></div>';
+  }).join('') + '</div>';
+}
+function productBars(rows, fmt) {
+  if (!rows || !rows.length) return '<div class="empty" style="padding:18px 0">Nothing yet</div>';
+  var max = Math.max.apply(null, rows.map(function (r) { return r.value !== undefined ? r.value : r.count; }));
+  return '<div class="prod-rows">' + rows.map(function (r, i) {
+    var v = r.value !== undefined ? r.value : r.count;
+    var img = imgOf(r.sku);
+    return '<div class="prod-row"><span class="prod-rank">' + (i + 1) + '</span>' +
+      (img ? '<img class="prod-img" loading="lazy" src="' + esc(img) + '">' : '<span class="prod-img"></span>') +
+      '<span><span class="prod-name">' + esc(r.name) + '</span><span class="prod-sku">' + esc(r.sku) + '</span>' +
+        '<span class="bar-track" style="margin-top:5px;display:block"><span class="bar-fill" style="display:block;width:' + Math.max(2, Math.round(v / max * 100)) + '%"></span></span></span>' +
+      '<span class="prod-val">' + fmt(v) + '</span></div>';
+  }).join('') + '</div>';
+}
+function statusBars(byStatus) {
+  var rows = Object.keys(byStatus).map(function (k) { return { key: k, count: byStatus[k] }; })
+    .sort(function (a, b) { return b.count - a.count; });
+  if (!rows.length) return '<div class="empty" style="padding:18px 0">No requests in this window</div>';
+  var total = rows.reduce(function (s, r) { return s + r.count; }, 0);
+  return '<div class="bars">' + rows.map(function (r) {
+    return '<div class="brow"><span class="blabel">' + esc(r.key) + '</span>' +
+      '<span class="bar-track"><span class="bar-fill" style="display:block;width:' + Math.round(r.count / total * 100) + '%"></span></span>' +
+      '<span class="bval">' + r.count + ' · ' + Math.round(r.count / total * 100) + '%</span></div>';
+  }).join('') + '</div>';
+}
+function funnelBars(steps) {
+  var top = steps[0] ? steps[0].n : 0;
+  return '<div class="bars">' + steps.map(function (s, i) {
+    var prev = i ? steps[i - 1].n : null;
+    return '<div class="brow"><span class="blabel">' + esc(s.step) + '</span>' +
+      '<span class="bar-track"><span class="bar-fill" style="display:block;width:' + (top ? Math.max(2, Math.round(s.n / top * 100)) : 2) + '%"></span></span>' +
+      '<span class="bval">' + qty(s.n) + (prev ? ' · ' + Math.round(s.n / prev * 100) + '%' : '') + '</span></div>';
+  }).join('') + '</div>';
+}
+function sparkline(weeks, pick, title, fmt) {
+  if (!weeks || weeks.length < 2) return '<div class="empty" style="padding:12px 0">Not enough weeks yet to draw a trend</div>';
+  var w = 460, h = 86, pad = 6;
+  var vals = weeks.map(pick);
+  var max = Math.max.apply(null, [1].concat(vals));
+  var step = (w - pad * 2) / (weeks.length - 1);
+  function pt(i) { return [pad + i * step, h - pad - (vals[i] / max) * (h - pad * 2)]; }
+  var line = vals.map(function (_, i) { return pt(i).join(','); }).join(' ');
+  var area = pad + ',' + (h - pad) + ' ' + line + ' ' + (w - pad) + ',' + (h - pad);
+  var lastPt = pt(vals.length - 1);
+  return '<div style="margin-bottom:14px">' +
+    '<div class="row-between"><span style="font-size:12.5px;color:var(--ink-3);font-weight:600">' + title + '</span>' +
+    '<strong>' + fmt(vals[vals.length - 1]) + '</strong></div>' +
+    '<svg viewBox="0 0 ' + w + ' ' + h + '" class="spark" preserveAspectRatio="none">' +
+    '<polygon points="' + area + '" fill="rgba(36,71,245,.10)"></polygon>' +
+    '<polyline points="' + line + '" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></polyline>' +
+    '<circle cx="' + lastPt[0] + '" cy="' + lastPt[1] + '" r="4" fill="var(--accent)" stroke="#fff" stroke-width="2"></circle></svg>' +
+    '<div class="row-between" style="font-size:12px;color:var(--ink-3)"><span>' + esc(weeks[0].week) + '</span><span>' + esc(weeks[weeks.length - 1].week) + '</span></div></div>';
+}
+
 function renderAnalytics() {
-  var an = A.analytics;
-  var f = an.funnel;
-  var reqTotal = Object.keys(f).reduce(function (s, k) { return s + f[k]; }, 0);
-  var conf = (f.Confirmed || 0) + (f.Dispatched || 0) + (f.Closed || 0);
+  var D = A.analytics;
+  var r = D.requests, d = D.decision, t = D.traffic, pr = D.products;
   $('p-analytics').innerHTML =
-    '<div class="kpis">' +
-      kpi(reqTotal, 'Requests, all time') +
-      kpi(f.New || 0, 'Awaiting review') +
-      kpi(conf, 'Converted (confirmed+)') +
-      kpi(reqTotal ? Math.round(conf / reqTotal * 100) + '%' : '—', 'Conversion') +
+    '<div class="panel-head"><h2>Analytics</h2>' +
+      '<span style="color:var(--ink-3);font-size:13px;font-weight:600">Last ' + D.days + ' days · generated ' + esc(D.generated_at) + '</span>' +
+      '<span class="sp"></span><div class="chips" style="margin:0" id="rangeChips">' +
+      [[30, '30 days'], [90, '90 days'], [180, '6 months'], [365, '1 year']].map(function (x) {
+        return '<button class="chip' + (A.days === x[0] ? ' on' : '') + '" data-d="' + x[0] + '">' + x[1] + '</button>';
+      }).join('') + '</div></div>' +
+
+    section('Requests', 'Every request raised through the storefront in this window.') +
+    '<div class="stat-row">' +
+      stat(qty(r.count), 'Requests') +
+      stat(inr(r.value), 'Request value') +
+      stat(inr(r.average), 'Average request') +
+      stat(d.conversion_rate === null ? '—' : d.conversion_rate + '%', 'Conversion (decided)') +
+      stat(d.median_hours_to_quote === null ? '—' : d.median_hours_to_quote + ' h', 'Median time to quote') +
+      stat(d.median_days_to_close === null ? '—' : d.median_days_to_close + ' d', 'Median days to close') +
     '</div>' +
-    '<div class="panel-head"><h2>Product trends</h2><span class="sp"></span>' +
-      '<div class="seg" id="winSeg">' +
-        [30, 60, 90].map(function (w) {
-          return '<button data-w="' + w + '" class="' + (A.win === w ? 'on' : '') + '">' + w + ' days</button>';
-        }).join('') + '</div></div>' +
-    '<div class="two-col">' +
-      '<div class="card-block"><h3>Top requested (units)</h3><div id="topReq"></div></div>' +
-      '<div class="card-block"><h3>Most viewed / clicked</h3><div id="topClick"></div></div>' +
-    '</div>';
-  $('winSeg').querySelectorAll('button').forEach(function (b) {
-    b.onclick = function () { A.win = Number(b.dataset.w); renderAnalytics(); };
+    (d.awaiting_over_3_days
+      ? '<div class="note2 warn"><strong>' + d.awaiting_over_3_days + ' request' + (d.awaiting_over_3_days === 1 ? '' : 's') +
+        ' waiting more than 3 days for a first response.</strong> ' + d.awaiting + ' awaiting review in total.</div>'
+      : '') +
+    '<div class="an-two">' +
+      card2('Request outcome', statusBars(r.by_status)) +
+      card2('Requests and value by week',
+        sparkline(D.trend, function (w) { return w.requests; }, 'Requests per week', qty) +
+        sparkline(D.trend, function (w) { return w.value; }, 'Request value per week', inr)) +
+    '</div>' +
+
+    section('Products', 'What buyers actually ask for, by units and by value.') +
+    '<div class="an-two">' +
+      card2('Top requested by units', productBars(pr.top_by_units, qty)) +
+      card2('Top requested by value', productBars(pr.top_by_value, inr)) +
+    '</div>' +
+    card2('Never requested · ' + pr.never_requested_total + ' of ' + pr.catalogue_size + ' products',
+      pr.never_requested.length
+        ? '<div style="max-height:300px;overflow:auto"><table class="tbl"><thead><tr><th>SKU</th><th>Product</th><th>Category</th><th class="num">MOQ</th></tr></thead><tbody>' +
+          pr.never_requested.map(function (x) {
+            return '<tr><td>' + esc(x.sku) + '</td><td>' + esc(x.name) + '</td><td>' + esc(x.category) + '</td><td class="num">' + x.moq + '</td></tr>';
+          }).join('') + '</tbody></table></div>'
+        : '<div class="empty" style="padding:14px 0">Every visible product has been requested at least once.</div>',
+      'A product nobody requests is wrong for the audience, priced past them, or has an unreachable MOQ.') +
+
+    section('Traffic', 'Behaviour on the storefront, recorded from the day it shipped.') +
+    '<div class="stat-row">' +
+      stat(qty(t.product_views), 'Product views') +
+      stat(qty(t.add_to_list), 'Added to list') +
+      stat(qty(t.requests_submitted), 'Requests submitted') +
+    '</div>' +
+    '<div class="an-two">' +
+      card2('From view to confirmed order', funnelBars(t.funnel)) +
+      card2('Most viewed products', productBars(t.top_viewed, qty)) +
+    '</div>' +
+    (t.searches_with_nothing.length
+      ? card2('Searched for, found nothing', barList(t.searches_with_nothing),
+          'The most useful list here: buyers asking the catalog for products it does not carry.')
+      : '') +
+    (t.top_searches.length ? card2('Top searches', barList(t.top_searches)) : '');
+
+  $('rangeChips').querySelectorAll('.chip').forEach(function (b) {
+    b.onclick = function () { A.days = Number(b.dataset.d); loadAnalytics(); };
   });
-  paintBars($('topReq'), an.top_requested[A.win] || [], function (x) { return x.value + ' u · ' + x.reqs + ' req'; });
-  paintBars($('topClick'), an.top_clicked[A.win] || [], function (x) { return x.value; });
 }
 
-function paintBars(elx, list, fmt) {
-  if (!list.length) { elx.innerHTML = '<div class="empty" style="padding:24px 0">No data in this window</div>'; return; }
-  var max = list[0].value;
-  elx.innerHTML = list.map(function (x) {
-    return '<div class="bar-row"><span class="lbl" title="' + esc(x.name) + '">' + esc(x.name) + '</span>' +
-      '<span class="track"><span class="bar" style="display:block;width:' + Math.max(3, Math.round(x.value / max * 100)) + '%"></span></span>' +
-      '<span class="num">' + fmt(x) + '</span></div>';
-  }).join('');
-}
-
-/* ================= SETTINGS ================= */
+/* ================= SETTINGS + STOCK SYNC ================= */
 function renderSettings() {
   A.loaded.settings = true;
   var s = A.settings;
@@ -546,7 +701,9 @@ function renderSettings() {
       '</div>' +
     '</div>' +
     '<div class="form-err" id="sErr"></div>' +
-    '<button class="btn primary" id="sSave" style="margin-top:14px">Save settings</button>';
+    '<button class="btn primary" id="sSave" style="margin:14px 0 10px">Save settings</button>' +
+    renderSyncCard(s);
+
   $('sSave').onclick = function () {
     $('sSave').disabled = true;
     api('adminSettings', { save: {
@@ -556,21 +713,130 @@ function renderSettings() {
     } }).then(function (res) {
       A.settings = res.settings;
       $('sSave').disabled = false;
-      toast('Settings saved');
+      toast('Settings saved — live on the storefront now');
     }).catch(function (e) { $('sErr').textContent = e.message; $('sSave').disabled = false; });
   };
+  wireSyncCard();
 }
 
-/* ---------- modal ---------- */
-function openModal(html) {
+function renderSyncCard(s) {
+  var last = null;
+  try { last = JSON.parse(s.sync_last || 'null'); } catch (e) {}
+  return section('Stock sync', 'The supplier keeps managing stock in their own Google Sheet. Link it here and Merchforce pulls on-hand quantities from it — manually or every hour.') +
+    '<div class="panel2">' +
+      '<div class="f2">' +
+        '<div class="field"><label>Supplier sheet link or ID</label><input id="ySheet" value="' + esc(s.sync_sheet_id) + '" placeholder="https://docs.google.com/spreadsheets/d/…"></div>' +
+        '<div class="field"><label>Tab (blank = first tab)</label><input id="yTab" value="' + esc(s.sync_tab) + '"></div>' +
+      '</div>' +
+      '<p class="note">The sheet must be shared (Viewer is enough) with the Merchforce backend account. Column headers are read from row 1.</p>' +
+      '<button class="btn small" id="yLoad">Load sheet</button> ' +
+      '<span id="yStatus" style="font-size:13px;color:var(--ink-3)"></span>' +
+      '<div id="yMap" style="margin-top:14px">' +
+        (s.sync_sku_col
+          ? '<p class="note">Current mapping: SKU ← <b>' + esc(s.sync_sku_col) + '</b> · Stock ← <b>' + esc(s.sync_stock_col) + '</b></p>'
+          : '') +
+      '</div>' +
+      '<div id="yActions" style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">' +
+        (s.sync_sheet_id && s.sync_sku_col
+          ? '<button class="btn primary small" id="ySyncNow">Sync now</button>' +
+            '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px">' +
+            '<input type="checkbox" id="yAuto"' + (s.sync_auto === 'hourly' ? ' checked' : '') + '> Auto-sync every hour</label>'
+          : '') +
+      '</div>' +
+      (last ? '<p class="note" style="margin-top:10px">Last sync ' + esc(String(last.ts).slice(0, 24)) + ' — ' +
+        (last.error ? '<span style="color:var(--bad)">' + esc(last.error) + '</span>'
+          : last.updated + ' updated, ' + last.unchanged + ' unchanged, ' + last.unknown + ' unknown SKU' + (last.unknown === 1 ? '' : 's') +
+            (last.unknown_skus && last.unknown_skus.length ? ' (' + esc(last.unknown_skus.join(', ')) + ')' : '')) + '</p>' : '') +
+    '</div>';
+}
+
+function wireSyncCard() {
+  var preview = null;
+  $('yLoad').onclick = function () {
+    $('yStatus').textContent = 'Opening sheet…';
+    api('adminSyncPreview', { sheet: $('ySheet').value.trim(), tab: $('yTab').value.trim() })
+      .then(function (res) {
+        preview = res;
+        $('yStatus').textContent = res.rows + ' rows · tab "' + res.tab + '"';
+        var opts = res.headers.map(function (h) { return '<option>' + esc(h) + '</option>'; }).join('');
+        $('yMap').innerHTML =
+          '<div class="f2">' +
+            '<div class="field"><label>SKU column</label><select id="yCol1"><option value="">—</option>' + opts + '</select></div>' +
+            '<div class="field"><label>Stock column</label><select id="yCol2"><option value="">—</option>' + opts + '</select></div>' +
+          '</div>' +
+          '<div class="tbl-wrap" style="max-height:180px;overflow:auto"><table class="tbl"><thead><tr>' +
+            res.headers.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') +
+          '</tr></thead><tbody>' +
+            res.sample.map(function (row) {
+              return '<tr>' + row.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>';
+            }).join('') +
+          '</tbody></table></div>';
+        // best-guess defaults
+        var guess = function (sel, words) {
+          var m = res.headers.filter(function (h) {
+            return words.some(function (w) { return h.toLowerCase().indexOf(w) >= 0; });
+          })[0];
+          if (m) $(sel).value = m;
+        };
+        guess('yCol1', ['sku', 'code', 'item']);
+        guess('yCol2', ['stock', 'qty', 'quantity', 'on hand', 'available']);
+        $('yActions').innerHTML = '<button class="btn primary small" id="ySyncNow">Save mapping & sync now</button>' +
+          '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px">' +
+          '<input type="checkbox" id="yAuto"' + (A.settings.sync_auto === 'hourly' ? ' checked' : '') + '> Auto-sync every hour</label>';
+        wireSyncActions(preview);
+      })
+      .catch(function (e) { $('yStatus').innerHTML = '<span style="color:var(--bad)">' + esc(e.message) + '</span>'; });
+  };
+  wireSyncActions(null);
+}
+
+function wireSyncActions(preview) {
+  var btn = $('ySyncNow');
+  if (btn) {
+    btn.onclick = function () {
+      var body = {};
+      if (preview) {
+        body = { sheet: preview.sheet_id, tab: preview.tab, sku_col: $('yCol1').value, stock_col: $('yCol2').value };
+        if (!body.sku_col || !body.stock_col) { toast('Pick the SKU and stock columns first'); return; }
+      }
+      btn.disabled = true;
+      btn.textContent = 'Syncing…';
+      api('adminSyncRun', body).then(function (res) {
+        toast(res.updated + ' updated · ' + res.unknown + ' unknown SKUs');
+        return api('adminSettings', {});
+      }).then(function (res) {
+        A.settings = res.settings;
+        renderSettings();
+      }).catch(function (e) {
+        toast(e.message);
+        btn.disabled = false;
+        btn.textContent = 'Sync now';
+      });
+    };
+  }
+  var auto = $('yAuto');
+  if (auto) {
+    auto.onchange = function () {
+      api('adminSyncSchedule', { mode: auto.checked ? 'hourly' : 'off' })
+        .then(function (res) {
+          A.settings.sync_auto = res.mode;
+          toast(res.mode === 'hourly' ? 'Auto-sync on — pulls every hour' : 'Auto-sync off');
+        })
+        .catch(function (e) { toast(e.message); auto.checked = !auto.checked; });
+    };
+  }
+}
+
+/* ---------- drawer ---------- */
+function openDrawer(html) {
   $('mBody').innerHTML = html;
   $('mOverlay').hidden = false;
   document.body.style.overflow = 'hidden';
 }
-function closeModal() {
+function closeDrawer() {
   $('mOverlay').hidden = true;
   document.body.style.overflow = '';
 }
-$('mClose').onclick = closeModal;
-$('mOverlay').addEventListener('click', function (e) { if (e.target === this) closeModal(); });
-document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+$('mClose').onclick = closeDrawer;
+$('mOverlay').addEventListener('click', function (e) { if (e.target === this) closeDrawer(); });
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDrawer(); });
