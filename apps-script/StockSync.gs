@@ -1,15 +1,37 @@
 /**
- * Merchforce — supplier stock sync, per brand.
- * The supplier keeps managing stock in their OWN Google Sheets — typically one
+ * Merchforce — supplier sheet sync, per brand.
+ * The supplier keeps managing their catalog in their OWN Google Sheets — one
  * workbook (or tab) per brand, like the Wenger stock sheet. Each brand gets a
- * mapping {brand, sheet, tab, sku_col, stock_col}; Merchforce pulls on-hand
- * from every mapping on demand or hourly. A mapping bound to a brand only
- * updates that brand's products, so one brand's sheet can never overwrite
- * another brand's stock.
+ * mapping {brand, sheet, tab, sku_col, fields:[{col, field}], create_new};
+ * any sheet column can feed any syncable product field. A mapping bound to a
+ * brand only touches that brand's products.
  *
  * Mappings live in Settings.sync_maps as a JSON array; each carries its own
- * last-run summary.
+ * last-run summary. Legacy maps with stock_col are migrated on read.
  */
+
+// Product fields the sheet is allowed to write. 'price' means the FIRST price
+// tier's unit price (the base selling price); deeper tiers stay admin-owned,
+// as do reserved / safety stock / visibility.
+var SYNC_FIELDS = {
+  on_hand:   { label: 'Stock (on hand)', numeric: true },
+  price:     { label: 'Selling price (first tier)', numeric: true },
+  mrp:       { label: 'MRP', numeric: true },
+  moq:       { label: 'MOQ', numeric: true },
+  gst_rate:  { label: 'GST %', numeric: true },
+  name:      { label: 'Product name' },
+  lead_time: { label: 'Lead time' },
+  description: { label: 'Description' },
+  category:  { label: 'Category' },
+  subcategory: { label: 'Subcategory' }
+};
+
+/** Legacy {stock_col} maps become fields:[{col, field:'on_hand'}]. */
+function mapFields_(map) {
+  if (map.fields && map.fields.length) return map.fields;
+  if (map.stock_col) return [{ col: map.stock_col, field: 'on_hand' }];
+  return [];
+}
 
 function sheetIdFrom_(v) {
   var m = String(v || '').match(/\/d\/([A-Za-z0-9_-]{20,})/);
@@ -60,13 +82,22 @@ function fnAdminSyncPreview_(p) {
 function fnAdminSyncMapSave_(p) {
   var m = p.map || {};
   m.sheet = sheetIdFrom_(m.sheet);
-  if (!m.sheet || !m.sku_col || !m.stock_col) {
-    return err_('Sheet, SKU column and stock column are all required');
+  var fields = (m.fields || []).filter(function (f) { return f.col && SYNC_FIELDS[f.field]; });
+  if (!m.sheet || !m.sku_col || !fields.length) {
+    return err_('Sheet, SKU column and at least one field mapping are required');
+  }
+  var seen = {};
+  for (var i = 0; i < fields.length; i++) {
+    if (seen[fields[i].field]) return err_('Field "' + SYNC_FIELDS[fields[i].field].label + '" is mapped twice');
+    seen[fields[i].field] = 1;
+  }
+  if (m.create_new && !m.brand) {
+    return err_('To auto-create new products, the mapping must be bound to one brand');
   }
   var maps = getSyncMaps_();
   var idx = toNum_(p.index);
   var rec = { brand: m.brand || '', sheet: m.sheet, tab: m.tab || '',
-              sku_col: m.sku_col, stock_col: m.stock_col, last: null };
+              sku_col: m.sku_col, fields: fields, create_new: !!m.create_new, last: null };
   if (p.index !== undefined && maps[idx]) { rec.last = maps[idx].last; maps[idx] = rec; }
   else maps.push(rec);
   saveSyncMaps_(maps);
@@ -100,24 +131,40 @@ function fnAdminSyncRun_(p) {
 }
 
 function runStockSync_(map, actor) {
-  var summary = { ts: String(now_()), matched: 0, updated: 0, unchanged: 0,
-                  unknown: 0, off_brand: 0, unknown_skus: [], error: null };
+  var summary = { ts: String(now_()), matched: 0, updated: 0, unchanged: 0, created: 0,
+                  unknown: 0, off_brand: 0, unknown_skus: [], created_skus: [], error: null };
   try {
+    var fields = mapFields_(map);
+    if (!fields.length) throw new Error('No field mappings — edit the mapping');
     var o = openSupplierSheet_(map.sheet, map.tab || '');
     var lastCol = o.sh.getLastColumn();
     var lastRow = o.sh.getLastRow();
     var headers = o.sh.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
     var iSku = headers.indexOf(String(map.sku_col).trim());
-    var iStock = headers.indexOf(String(map.stock_col).trim());
-    if (iSku < 0 || iStock < 0) throw new Error('Mapped column not found — re-map the columns');
+    if (iSku < 0) throw new Error('SKU column not found — re-map the columns');
+    var fIdx = fields.map(function (f) {
+      var i = headers.indexOf(String(f.col).trim());
+      if (i < 0) throw new Error('Column "' + f.col + '" not found — re-map the columns');
+      return { i: i, field: f.field, numeric: !!SYNC_FIELDS[f.field].numeric };
+    });
     var data = lastRow > 1 ? o.sh.getRange(2, 1, lastRow - 1, lastCol).getValues() : [];
 
-    var incoming = {}; // sku -> stock (last row wins)
+    var incoming = {}; // skuKey -> {sku, values:{field: value}} (last row wins)
     data.forEach(function (row) {
-      var sku = String(row[iSku]).trim().toUpperCase();
-      if (!sku) return;
-      var n = Number(row[iStock]);
-      incoming[sku] = isNaN(n) ? 0 : Math.max(0, Math.floor(n));
+      var rawSku = String(row[iSku]).trim();
+      if (!rawSku) return;
+      var values = {};
+      fIdx.forEach(function (f) {
+        var v = row[f.i];
+        if (f.numeric) {
+          var n = Number(v);
+          values[f.field] = isNaN(n) ? null : Math.max(0, f.field === 'gst_rate' ? n : Math.floor(n * 100) / 100);
+          if (f.field === 'on_hand' || f.field === 'moq') values[f.field] = values[f.field] === null ? null : Math.floor(values[f.field]);
+        } else {
+          values[f.field] = String(v === undefined || v === null ? '' : v).trim();
+        }
+      });
+      incoming[skuKey_(rawSku)] = { sku: rawSku, values: values };
     });
 
     var lock = LockService.getScriptLock();
@@ -125,29 +172,87 @@ function runStockSync_(map, actor) {
     try {
       var sh = sheet_('Products');
       var cols = SHEETS.Products;
-      var iOnHand = cols.indexOf('on_hand') + 1;
       var iUpdated = cols.indexOf('updated') + 1;
       var rows = readRows_('Products');
+
+      // first-tier price index for the 'price' field
+      var tierRows = readRows_('PriceTiers');
+      var firstTierRow = {}; // skuKey -> {rowNum, min, price}
+      tierRows.forEach(function (t, i) {
+        var k = skuKey_(t.sku);
+        if (!firstTierRow[k] || toNum_(t.min_qty) < firstTierRow[k].min) {
+          firstTierRow[k] = { rowNum: i + 2, min: toNum_(t.min_qty), price: toNum_(t.unit_price) };
+        }
+      });
+      var shT = sheet_('PriceTiers');
+
       var known = {};
       rows.forEach(function (r, i) {
-        var sku = String(r.sku).trim().toUpperCase();
-        known[sku] = r.brand_id;
-        if (!(sku in incoming)) return;
+        var k = skuKey_(r.sku);
+        known[k] = 1;
+        var inc = incoming[k];
+        if (!inc) return;
         if (map.brand && r.brand_id !== map.brand) { summary.off_brand++; return; }
         summary.matched++;
-        var cur = toNum_(r.on_hand), next = incoming[sku];
-        if (cur === next) { summary.unchanged++; return; }
-        sh.getRange(i + 2, iOnHand).setValue(next);
-        sh.getRange(i + 2, iUpdated).setValue(now_());
-        appendRecord_('StockLog', { ts: now_(), sku: r.sku, delta: next - cur,
-                                    reason: 'sheet sync' + (map.brand ? ' (' + map.brand + ')' : ''),
-                                    actor: actor || 'sync' });
-        summary.updated++;
+        var changed = false;
+        Object.keys(inc.values).forEach(function (field) {
+          var v = inc.values[field];
+          if (v === null) return;
+          if (field === 'price') {
+            var ft = firstTierRow[k];
+            if (ft) {
+              if (ft.price !== v) { shT.getRange(ft.rowNum, 3).setValue(v); changed = true; }
+            } else {
+              appendRecord_('PriceTiers', { sku: String(r.sku), min_qty: toNum_(r.moq) || 1, unit_price: v, gst: '' });
+              changed = true;
+            }
+            return;
+          }
+          var iCol = cols.indexOf(field) + 1;
+          if (iCol < 1) return;
+          var cur = SYNC_FIELDS[field].numeric ? toNum_(r[field]) : String(r[field] === undefined ? '' : r[field]);
+          var next = SYNC_FIELDS[field].numeric ? v : String(v);
+          if (cur === next) return;
+          sh.getRange(i + 2, iCol).setValue(next);
+          changed = true;
+          if (field === 'on_hand') {
+            appendRecord_('StockLog', { ts: now_(), sku: String(r.sku), delta: next - cur,
+              reason: 'sheet sync' + (map.brand ? ' (' + map.brand + ')' : ''), actor: actor || 'sync' });
+          }
+        });
+        if (changed) {
+          sh.getRange(i + 2, iUpdated).setValue(now_());
+          summary.updated++;
+        } else {
+          summary.unchanged++;
+        }
       });
-      Object.keys(incoming).forEach(function (sku) {
-        if (!(sku in known)) {
+
+      // rows in the sheet that are not in the catalog
+      Object.keys(incoming).forEach(function (k) {
+        if (known[k]) return;
+        var inc = incoming[k];
+        if (map.create_new && map.brand) {
+          var v = inc.values;
+          var moq = v.moq || 1;
+          appendRecord_('Products', {
+            sku: String(inc.sku).toUpperCase(), name: v.name || String(inc.sku),
+            brand_id: map.brand, category: v.category || '', subcategory: v.subcategory || '',
+            description: v.description || '', specs: '', image_urls: '',
+            moq: moq, gst_rate: v.gst_rate === undefined || v.gst_rate === null ? 18 : v.gst_rate,
+            lead_time: v.lead_time || '', on_hand: v.on_hand || 0, reserved: 0,
+            safety_stock: 0, reorder_point: 0,
+            visible: 'FALSE', show_price: 'TRUE', created: now_(), updated: now_(),
+            mrp: v.mrp || ''
+          });
+          if (v.price) {
+            appendRecord_('PriceTiers', { sku: String(inc.sku).toUpperCase(), min_qty: moq, unit_price: v.price, gst: '' });
+          }
+          summary.created++;
+          if (summary.created_skus.length < 20) summary.created_skus.push(String(inc.sku));
+        } else {
           summary.unknown++;
-          if (summary.unknown_skus.length < 20) summary.unknown_skus.push(sku);
+          if (summary.unknown_skus.length < 20) summary.unknown_skus.push(String(inc.sku));
         }
       });
     } finally {
@@ -157,20 +262,19 @@ function runStockSync_(map, actor) {
   } catch (e) {
     summary.error = e.message || String(e);
   }
-  audit_(actor || 'sync', 'stock_sync', (map.brand || 'all') + ':' + map.sheet,
-    summary.error || (summary.updated + ' updated, ' + summary.unknown + ' unknown'));
+  audit_(actor || 'sync', 'sheet_sync', (map.brand || 'all') + ':' + map.sheet,
+    summary.error || (summary.updated + ' updated, ' + summary.created + ' created, ' + summary.unknown + ' unknown'));
   return summary;
 }
 
-/** Hourly auto-pull of every mapping. */
+/** Scheduled auto-pull of every mapping: off | hourly | daily (~06:00 IST). */
 function fnAdminSyncSchedule_(p) {
-  var mode = p.mode === 'hourly' ? 'hourly' : 'off';
+  var mode = ['hourly', 'daily'].indexOf(p.mode) >= 0 ? p.mode : 'off';
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'syncTick') ScriptApp.deleteTrigger(t);
   });
-  if (mode === 'hourly') {
-    ScriptApp.newTrigger('syncTick').timeBased().everyHours(1).create();
-  }
+  if (mode === 'hourly') ScriptApp.newTrigger('syncTick').timeBased().everyHours(1).create();
+  if (mode === 'daily') ScriptApp.newTrigger('syncTick').timeBased().everyDays(1).atHour(6).create();
   saveSettings_({ sync_auto: mode });
   audit_(p.actor || 'admin', 'sync_schedule', '', mode);
   return ok_({ mode: mode });

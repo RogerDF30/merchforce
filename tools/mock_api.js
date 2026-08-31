@@ -288,7 +288,11 @@ const ACTIONS = {
     : { ok: false, error: 'Paste the supplier sheet link or ID' }),
   adminSyncMapSave: b => {
     const maps = JSON.parse(db.settings.sync_maps || '[]');
-    const rec = { brand: b.map.brand || '', sheet: b.map.sheet, tab: b.map.tab || '', sku_col: b.map.sku_col, stock_col: b.map.stock_col, last: null };
+    const rec = { brand: b.map.brand || '', sheet: b.map.sheet, tab: b.map.tab || '', sku_col: b.map.sku_col,
+      fields: b.map.fields || (b.map.stock_col ? [{ col: b.map.stock_col, field: 'on_hand' }] : []),
+      create_new: !!b.map.create_new, last: null };
+    if (!rec.fields.length) return { ok: false, error: 'Sheet, SKU column and at least one field mapping are required' };
+    if (rec.create_new && !rec.brand) return { ok: false, error: 'To auto-create new products, the mapping must be bound to one brand' };
     if (b.index !== undefined && maps[b.index]) { rec.last = maps[b.index].last; maps[b.index] = rec; } else maps.push(rec);
     db.settings.sync_maps = JSON.stringify(maps);
     return { ok: true, maps };
@@ -304,7 +308,7 @@ const ACTIONS = {
     if (!maps.length) return { ok: false, error: 'No mappings yet — add one first' };
     const idxs = b.index !== undefined ? [b.index] : maps.map((_, i) => i);
     const results = idxs.filter(i => maps[i]).map(i => {
-      const summary = { ts: new Date().toString(), matched: 4, updated: 2, unchanged: 2, unknown: 1, off_brand: maps[i].brand ? 1 : 0, unknown_skus: ['OLD-001'], error: null };
+      const summary = { ts: new Date().toString(), matched: 4, updated: 2, unchanged: 2, created: maps[i].create_new ? 2 : 0, created_skus: maps[i].create_new ? ['NEW-101','NEW-102'] : [], unknown: maps[i].create_new ? 0 : 1, off_brand: maps[i].brand ? 1 : 0, unknown_skus: maps[i].create_new ? [] : ['OLD-001'], error: null };
       maps[i].last = summary;
       return { index: i, brand: maps[i].brand, summary };
     });
@@ -312,7 +316,7 @@ const ACTIONS = {
     return { ok: true, results, maps };
   },
   adminSyncTemplate: () => ({ ok: true, url: 'https://docs.google.com/spreadsheets/d/mock-template', sheet_id: 'mock-template', name: 'Merchforce Stock Template — 31 Aug 2026' }),
-  adminSyncSchedule: b => { db.settings.sync_auto = b.mode === 'hourly' ? 'hourly' : 'off'; return { ok: true, mode: db.settings.sync_auto }; },
+  adminSyncSchedule: b => { db.settings.sync_auto = ['hourly','daily'].includes(b.mode) ? b.mode : 'off'; return { ok: true, mode: db.settings.sync_auto }; },
   adminSettings: b => { if (b.save) Object.assign(db.settings, b.save); return { ok: true, settings: db.settings }; },
   adminExportCsv: b => ({ ok: true, filename: 'mock.csv', csv: 'sku,name\n' + db.products.map(p => p.sku + ',' + JSON.stringify(p.name)).join('\n') })
 };
