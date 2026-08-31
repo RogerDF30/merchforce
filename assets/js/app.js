@@ -4,7 +4,7 @@
 var CONFIG = {
   // Set API_URL to the Apps Script /exec URL after deployment.
   API_URL: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? '/api' : 'PASTE_EXEC_URL_HERE',
+    ? '/api' : 'https://script.google.com/macros/s/AKfycbzf3CTREzupukc4R8En8ap0ueAGjP3N9yUYq_Svmou19NIVhB4936bArrRMhZxSUkYHFA/exec',
   API_TOKEN: (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
     ? 'mf-demo-token' : 'PASTE_API_TOKEN_HERE'
 };

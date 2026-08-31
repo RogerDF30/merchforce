@@ -5,7 +5,7 @@
  */
 
 // One-time bootstrap key. Rotate/blank after running setup (see Setup.gs).
-var SETUP_KEY = 'CHANGE-ME-BEFORE-SETUP';
+var SETUP_KEY = 'b967ce577d2cb1e4c23e00d6';
 
 var APP_NAME = 'Merchforce';
 
