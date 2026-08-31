@@ -92,3 +92,6 @@ function nextRequestId_() {
 
 /** Sheets coerces the string 'TRUE' to boolean true on write — accept both. */
 function isTrue_(v) { return String(v).toUpperCase() === 'TRUE'; }
+
+/** Sheets stores numeric-looking SKUs as numbers — always compare via this key. */
+function skuKey_(v) { return String(v === undefined || v === null ? '' : v).trim().toUpperCase(); }

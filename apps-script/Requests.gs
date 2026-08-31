@@ -13,23 +13,23 @@ function fnRequestSubmit_(p) {
   if (!lines.length) return err_('Cart is empty');
 
   var products = {};
-  readRows_('Products').forEach(function (r) { products[r.sku] = r; });
+  readRows_('Products').forEach(function (r) { products[skuKey_(r.sku)] = r; });
   var tiers = {};
   readRows_('PriceTiers').forEach(function (t) {
-    (tiers[t.sku] = tiers[t.sku] || []).push({ min: toNum_(t.min_qty), price: toNum_(t.unit_price) });
+    (tiers[skuKey_(t.sku)] = tiers[skuKey_(t.sku)] || []).push({ min: toNum_(t.min_qty), price: toNum_(t.unit_price) });
   });
 
   var cleaned = [];
   for (var i = 0; i < lines.length; i++) {
     var ln = lines[i];
-    var pr = products[ln.sku];
+    var pr = products[skuKey_(ln.sku)];
     if (!pr || !isTrue_(pr.visible)) return err_('Unknown product: ' + ln.sku);
     var qty = Math.floor(toNum_(ln.qty));
     if (qty < toNum_(pr.moq)) return err_(pr.name + ': minimum order is ' + pr.moq);
     var price = 0;
-    (tiers[ln.sku] || []).sort(function (a, b) { return a.min - b.min; })
+    (tiers[skuKey_(ln.sku)] || []).sort(function (a, b) { return a.min - b.min; })
       .forEach(function (t) { if (qty >= t.min) price = t.price; });
-    cleaned.push({ sku: ln.sku, name: pr.name, qty: qty, price: price, total: qty * price });
+    cleaned.push({ sku: String(ln.sku), name: pr.name, qty: qty, price: price, total: qty * price });
   }
 
   var id = nextRequestId_();
@@ -119,10 +119,10 @@ function fnAdminRequestUpdate_(p) {
       if (to === 'Confirmed') {
         // atomic ATP re-check — first confirmed wins
         var products = {};
-        readRows_('Products').forEach(function (r) { products[r.sku] = r; });
+        readRows_('Products').forEach(function (r) { products[skuKey_(r.sku)] = r; });
         var short = [];
         lines.forEach(function (l) {
-          var pr = products[l.sku];
+          var pr = products[skuKey_(l.sku)];
           if (!pr || atp_(pr) < toNum_(l.qty)) {
             short.push(l.sku + ' (need ' + l.qty + ', ATP ' + (pr ? atp_(pr) : 0) + ')');
           }
@@ -163,7 +163,7 @@ function adjustStock_(lines, mode, dir, reason, actor) {
   var iOnHand = cols.indexOf('on_hand') + 1;
   var iReserved = cols.indexOf('reserved') + 1;
   lines.forEach(function (l) {
-    var rowNum = findRow_('Products', function (r) { return r.sku === l.sku; });
+    var rowNum = findRow_('Products', function (r) { return skuKey_(r.sku) === skuKey_(l.sku); });
     if (rowNum < 0) return;
     var qty = toNum_(l.qty);
     if (mode === 'dispatch') {

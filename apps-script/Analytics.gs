@@ -13,7 +13,7 @@ function fnAdminAnalytics_(p) {
   var products = readRows_('Products');
   var names = {}, catalogueSize = 0;
   products.forEach(function (r) {
-    names[r.sku] = r.name;
+    names[skuKey_(r.sku)] = r.name;
     if (isTrue_(r.visible)) catalogueSize++;
   });
 
@@ -67,11 +67,12 @@ function fnAdminAnalytics_(p) {
   all.forEach(function (r) { reqTs[r.request_id] = new Date(r.created).getTime(); });
   var everRequested = {}, units = {}, lineValue = {};
   readRows_('RequestLines').forEach(function (l) {
-    everRequested[l.sku] = 1;
+    var k = skuKey_(l.sku);
+    everRequested[k] = 1;
     var ts = reqTs[l.request_id];
     if (!ts || ts < cutoff) return;
-    units[l.sku] = (units[l.sku] || 0) + toNum_(l.qty);
-    lineValue[l.sku] = (lineValue[l.sku] || 0) + toNum_(l.line_total);
+    units[k] = (units[k] || 0) + toNum_(l.qty);
+    lineValue[k] = (lineValue[k] || 0) + toNum_(l.line_total);
   });
   function top(obj, fmt) {
     return Object.keys(obj).map(function (sku) {
@@ -79,9 +80,9 @@ function fnAdminAnalytics_(p) {
     }).sort(function (a, b) { return b.value - a.value; }).slice(0, 8);
   }
   var neverRequested = products.filter(function (r) {
-    return isTrue_(r.visible) && !everRequested[r.sku];
+    return isTrue_(r.visible) && !everRequested[skuKey_(r.sku)];
   }).map(function (r) {
-    return { sku: r.sku, name: r.name, category: r.category, moq: toNum_(r.moq) };
+    return { sku: String(r.sku), name: r.name, category: r.category, moq: toNum_(r.moq) };
   });
 
   // ---------- traffic (Events) ----------
@@ -91,7 +92,7 @@ function fnAdminAnalytics_(p) {
     var ts = new Date(ev.date + 'T00:00:00+05:30').getTime();
     if (isNaN(ts) || ts < cutoff) return;
     var n = toNum_(ev.count);
-    if (ev.type === 'view') { t.views += n; viewed[ev.sku] = (viewed[ev.sku] || 0) + n; }
+    if (ev.type === 'view') { t.views += n; viewed[skuKey_(ev.sku)] = (viewed[skuKey_(ev.sku)] || 0) + n; }
     if (ev.type === 'click') t.clicks += n;
     if (ev.type === 'search') searches[ev.sku] = (searches[ev.sku] || 0) + n;
     if (ev.type === 'search_nil') searchesNil[ev.sku] = (searchesNil[ev.sku] || 0) + n;

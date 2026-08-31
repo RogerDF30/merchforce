@@ -33,7 +33,7 @@ function publicProduct_(pr, tiersBySku, settings) {
   var low = toNum_(settings.low_stock_threshold);
   var showPrice = isTrue_(pr.show_price);
   return {
-    sku: pr.sku, name: pr.name, brand: pr.brand_id,
+    sku: String(pr.sku), name: pr.name, brand: pr.brand_id,
     category: pr.category, subcategory: pr.subcategory,
     description: pr.description,
     specs: String(pr.specs || '').split('|').filter(String),
@@ -43,7 +43,7 @@ function publicProduct_(pr, tiersBySku, settings) {
     stock: settings.show_stock_numbers === 'exact' ? atp : null,
     stock_badge: atp <= 0 ? 'out' : (atp <= low ? 'low' : 'in'),
     show_price: showPrice,
-    tiers: showPrice ? (tiersBySku[pr.sku] || []) : []
+    tiers: showPrice ? (tiersBySku[skuKey_(pr.sku)] || []) : []
   };
 }
 
@@ -55,9 +55,10 @@ function fnCatalog_(p) {
   var s = getSettings_();
   var tiers = {};
   readRows_('PriceTiers').forEach(function (t) {
-    if (!tiers[t.sku]) tiers[t.sku] = [];
-    tiers[t.sku].push({ min: toNum_(t.min_qty), price: toNum_(t.unit_price),
-                        gst: t.gst === '' || t.gst === undefined ? null : toNum_(t.gst) });
+    var k = skuKey_(t.sku);
+    if (!tiers[k]) tiers[k] = [];
+    tiers[k].push({ min: toNum_(t.min_qty), price: toNum_(t.unit_price),
+                    gst: t.gst === '' || t.gst === undefined ? null : toNum_(t.gst) });
   });
   Object.keys(tiers).forEach(function (k) {
     tiers[k].sort(function (a, b) { return a.min - b.min; });
@@ -74,11 +75,11 @@ function fnCatalog_(p) {
 
 function fnProduct_(p) {
   var s = getSettings_();
-  var row = readRows_('Products').filter(function (r) { return r.sku === p.sku; })[0];
+  var row = readRows_('Products').filter(function (r) { return skuKey_(r.sku) === skuKey_(p.sku); })[0];
   if (!row || !isTrue_(row.visible)) return err_('Not found');
   var tiers = {};
-  tiers[p.sku] = readRows_('PriceTiers')
-    .filter(function (t) { return t.sku === p.sku; })
+  tiers[skuKey_(p.sku)] = readRows_('PriceTiers')
+    .filter(function (t) { return skuKey_(t.sku) === skuKey_(p.sku); })
     .map(function (t) { return { min: toNum_(t.min_qty), price: toNum_(t.unit_price),
                                  gst: t.gst === '' || t.gst === undefined ? null : toNum_(t.gst) }; })
     .sort(function (a, b) { return a.min - b.min; });

@@ -8,14 +8,15 @@ function fnAdminUnlock_(p) {
 function fnAdminCatalog_(p) {
   var tiers = {};
   readRows_('PriceTiers').forEach(function (t) {
-    (tiers[t.sku] = tiers[t.sku] || []).push({
+    var k = skuKey_(t.sku);
+    (tiers[k] = tiers[k] || []).push({
       min: toNum_(t.min_qty), price: toNum_(t.unit_price),
       gst: t.gst === '' || t.gst === undefined ? '' : toNum_(t.gst)
     });
   });
   var products = readRows_('Products').map(function (r) {
     return {
-      sku: r.sku, name: r.name, brand_id: r.brand_id, category: r.category,
+      sku: String(r.sku), name: r.name, brand_id: r.brand_id, category: r.category,
       subcategory: r.subcategory, description: r.description, specs: r.specs,
       images: String(r.image_urls || '').split('|').filter(String),
       moq: toNum_(r.moq), gst_rate: toNum_(r.gst_rate), lead_time: r.lead_time,
@@ -24,7 +25,7 @@ function fnAdminCatalog_(p) {
       safety_stock: toNum_(r.safety_stock), reorder_point: toNum_(r.reorder_point),
       atp: atp_(r), visible: isTrue_(r.visible),
       show_price: isTrue_(r.show_price),
-      tiers: (tiers[r.sku] || []).sort(function (a, b) { return a.min - b.min; })
+      tiers: (tiers[skuKey_(r.sku)] || []).sort(function (a, b) { return a.min - b.min; })
     };
   });
   var brands = readRows_('Brands').map(function (b) {
@@ -51,7 +52,7 @@ function fnAdminProductSave_(p) {
   var lock = LockService.getScriptLock();
   lock.waitLock(15000);
   try {
-    var rowNum = findRow_('Products', function (r) { return r.sku === d.sku; });
+    var rowNum = findRow_('Products', function (r) { return skuKey_(r.sku) === skuKey_(d.sku); });
     var rec = {
       sku: d.sku, name: d.name, brand_id: d.brand_id || '', category: d.category || '',
       subcategory: d.subcategory || '', description: d.description || '',
@@ -81,7 +82,7 @@ function fnAdminProductSave_(p) {
     }
 
     // replace tiers (per-tier GST optional: blank inherits the product rate)
-    replaceChildRows_('PriceTiers', function (r) { return r.sku === d.sku; },
+    replaceChildRows_('PriceTiers', function (r) { return skuKey_(r.sku) === skuKey_(d.sku); },
       (d.tiers || []).map(function (t) {
         return { sku: d.sku, min_qty: toNum_(t.min), unit_price: toNum_(t.price),
                  gst: (t.gst === '' || t.gst === undefined || t.gst === null) ? '' : toNum_(t.gst) };
@@ -96,7 +97,7 @@ function fnAdminProductSave_(p) {
 }
 
 function fnAdminProductDelete_(p) {
-  var rowNum = findRow_('Products', function (r) { return r.sku === p.sku; });
+  var rowNum = findRow_('Products', function (r) { return skuKey_(r.sku) === skuKey_(p.sku); });
   if (rowNum < 0) return err_('Not found');
   // soft delete: hide, keep history (requests reference the SKU)
   var cols = SHEETS.Products;
@@ -215,4 +216,36 @@ function fnAdminExportCsv_(p) {
     }).join(','));
   });
   return ok_({ filename: 'merchforce_' + p.tab.toLowerCase() + '_' + today_() + '.csv', csv: lines.join('\n') });
+}
+
+/**
+ * Maintenance: collapse duplicate Products rows (same SKU key — Sheets number
+ * vs string) keeping the LAST row, and duplicate PriceTiers rows (same
+ * sku+min_qty) keeping the last. Idempotent.
+ */
+function fnAdminDedupe_(p) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var removedP = 0, removedT = 0;
+    var sh = sheet_('Products');
+    var rows = readRows_('Products');
+    var lastIdx = {};
+    rows.forEach(function (r, i) { lastIdx[skuKey_(r.sku)] = i; });
+    for (var i = rows.length - 1; i >= 0; i--) {
+      if (lastIdx[skuKey_(rows[i].sku)] !== i) { sh.deleteRow(i + 2); removedP++; }
+    }
+    var shT = sheet_('PriceTiers');
+    var tRows = readRows_('PriceTiers');
+    var lastT = {};
+    tRows.forEach(function (t, i) { lastT[skuKey_(t.sku) + '|' + toNum_(t.min_qty)] = i; });
+    for (var j = tRows.length - 1; j >= 0; j--) {
+      if (lastT[skuKey_(tRows[j].sku) + '|' + toNum_(tRows[j].min_qty)] !== j) { shT.deleteRow(j + 2); removedT++; }
+    }
+    CacheService.getScriptCache().remove('catalog_v1');
+    audit_(p.actor || 'admin', 'dedupe', '', removedP + ' products, ' + removedT + ' tiers removed');
+    return ok_({ removed_products: removedP, removed_tiers: removedT });
+  } finally {
+    lock.releaseLock();
+  }
 }

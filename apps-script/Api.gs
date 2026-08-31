@@ -47,7 +47,8 @@ function doPost(e) {
       adminSyncSchedule:  fnAdminSyncSchedule_,
       adminSyncMapSave:   fnAdminSyncMapSave_,
       adminSyncMapDelete: fnAdminSyncMapDelete_,
-      adminSyncTemplate:  fnAdminSyncTemplate_
+      adminSyncTemplate:  fnAdminSyncTemplate_,
+      adminDedupe:        fnAdminDedupe_
     };
 
     if (PUBLIC[p.action]) {
