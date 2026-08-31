@@ -316,7 +316,8 @@ const ACTIONS = {
     return { ok: true, results, maps };
   },
   adminSyncTemplate: () => ({ ok: true, url: 'https://docs.google.com/spreadsheets/d/mock-template', sheet_id: 'mock-template', name: 'Merchforce Stock Template — 31 Aug 2026' }),
-  adminSyncSchedule: b => { db.settings.sync_auto = ['hourly','daily'].includes(b.mode) ? b.mode : 'off'; return { ok: true, mode: db.settings.sync_auto }; },
+  adminSyncSchedule: b => { db.settings.sync_auto = ['live5','hourly','daily'].includes(b.mode) ? b.mode : 'off'; return { ok: true, mode: db.settings.sync_auto }; },
+  syncPing: b => ({ ok: true, synced: 1, touched: 2 }),
   adminSettings: b => { if (b.save) Object.assign(db.settings, b.save); return { ok: true, settings: db.settings }; },
   adminExportCsv: b => ({ ok: true, filename: 'mock.csv', csv: 'sku,name\n' + db.products.map(p => p.sku + ',' + JSON.stringify(p.name)).join('\n') })
 };

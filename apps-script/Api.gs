@@ -25,7 +25,8 @@ function doPost(e) {
       product: fnProduct_,
       track:   fnTrack_,
       request: fnRequestSubmit_,
-      login:   fnLogin_
+      login:   fnLogin_,
+      syncPing: fnSyncPing_
     };
     var ADMIN = {
       adminUnlock:        fnAdminUnlock_,

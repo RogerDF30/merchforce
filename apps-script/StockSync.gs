@@ -267,17 +267,47 @@ function runStockSync_(map, actor) {
   return summary;
 }
 
-/** Scheduled auto-pull of every mapping: off | hourly | daily (~06:00 IST). */
+/** Scheduled auto-pull of every mapping: off | live5 (every 5 min) | hourly | daily (~06:00 IST). */
 function fnAdminSyncSchedule_(p) {
-  var mode = ['hourly', 'daily'].indexOf(p.mode) >= 0 ? p.mode : 'off';
+  var mode = ['live5', 'hourly', 'daily'].indexOf(p.mode) >= 0 ? p.mode : 'off';
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'syncTick') ScriptApp.deleteTrigger(t);
   });
+  if (mode === 'live5') ScriptApp.newTrigger('syncTick').timeBased().everyMinutes(5).create();
   if (mode === 'hourly') ScriptApp.newTrigger('syncTick').timeBased().everyHours(1).create();
   if (mode === 'daily') ScriptApp.newTrigger('syncTick').timeBased().everyDays(1).atHour(6).create();
   saveSettings_({ sync_auto: mode });
   audit_(p.actor || 'admin', 'sync_schedule', '', mode);
   return ok_({ mode: mode });
+}
+
+/**
+ * TRUE live sync: a tiny connector script installed on the SUPPLIER'S sheet
+ * (see the Live sync panel in Admin → Settings) POSTs {action:'syncPing',
+ * sheet:<id>} here the moment a cell is edited. We debounce per sheet (45s)
+ * and pull just the mappings for that sheet. Public action — the token
+ * authorises it and it can only trigger a pull that admins configured.
+ */
+function fnSyncPing_(p) {
+  var id = sheetIdFrom_(p.sheet);
+  if (!id) return err_('sheet required');
+  var maps = getSyncMaps_();
+  var mine = [];
+  maps.forEach(function (m, i) { if (m.sheet === id) mine.push(i); });
+  if (!mine.length) return ok_({ synced: 0, note: 'No mapping uses this sheet' });
+
+  var cache = CacheService.getScriptCache();
+  if (cache.get('ping_' + id)) return ok_({ synced: 0, throttled: true });
+  cache.put('ping_' + id, '1', 45);
+
+  var touched = 0;
+  mine.forEach(function (i) {
+    var summary = runStockSync_(maps[i], 'live-sync');
+    maps[i].last = summary;
+    touched += (summary.updated || 0) + (summary.created || 0);
+  });
+  saveSyncMaps_(maps);
+  return ok_({ synced: mine.length, touched: touched });
 }
 
 function syncTick() {

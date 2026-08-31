@@ -779,9 +779,11 @@ function renderSyncCard(s) {
         '<button class="btn primary small" id="yAdd">+ Add brand mapping</button>' +
         (maps.length > 1 ? '<button class="btn small" id="ySyncAll">Sync all now</button>' : '') +
         '<button class="btn small" id="yTemplate">Generate template sheet</button>' +
+        '<button class="btn small" id="yLive">⚡ Instant sync setup</button>' +
         '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-left:auto">Auto-sync' +
           '<select id="yAuto" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px">' +
             '<option value="off"' + (s.sync_auto === 'off' || !s.sync_auto ? ' selected' : '') + '>Off — manual only</option>' +
+            '<option value="live5"' + (s.sync_auto === 'live5' ? ' selected' : '') + '>Near-live (every 5 min)</option>' +
             '<option value="hourly"' + (s.sync_auto === 'hourly' ? ' selected' : '') + '>Every hour</option>' +
             '<option value="daily"' + (s.sync_auto === 'daily' ? ' selected' : '') + '>Daily (~6 am)</option>' +
           '</select></label>' +
@@ -829,6 +831,7 @@ function wireSyncCard() {
       $('yTplOut').innerHTML = 'Template ready: <a href="' + esc(res.url) + '" target="_blank">' + esc(res.name) + ' ↗</a> — one tab per brand, in the supplier\'s format (Code · Product Name · MRP · Selling Price Excluding GST · Stock). Ask the supplier to File → Make a copy and maintain theirs.';
     }).catch(function (e) { $('yTemplate').disabled = false; $('yTplOut').textContent = e.message; });
   };
+  $('yLive').onclick = openLiveSyncHelp;
   var auto = $('yAuto');
   if (auto) {
     auto.onchange = function () {
@@ -836,7 +839,9 @@ function wireSyncCard() {
       api('adminSyncSchedule', { mode: auto.value })
         .then(function (res) {
           A.settings.sync_auto = res.mode;
-          toast(res.mode === 'off' ? 'Auto-sync off' : 'Auto-sync ' + (res.mode === 'hourly' ? 'every hour' : 'daily around 6 am'));
+          var msg = { off: 'Auto-sync off', live5: 'Near-live — pulls every 5 minutes',
+                      hourly: 'Auto-sync every hour', daily: 'Auto-sync daily around 6 am' };
+          toast(msg[res.mode]);
         })
         .catch(function (e) { toast(e.message); auto.value = prev; });
     };
@@ -987,6 +992,48 @@ function openMapEditor(m, index) {
       closeDrawer();
       return refreshSettings_();
     }).catch(function (e) { $('mErr').textContent = e.message; $('zSave').disabled = false; });
+  };
+}
+
+/* Instant (edit-triggered) sync: connector script for the supplier's sheet. */
+function openLiveSyncHelp() {
+  var code =
+"/** Merchforce live-sync connector — lives on the supplier's stock sheet. */\n" +
+"var MERCHFORCE_URL = '" + CONFIG.API_URL + "';\n" +
+"var MERCHFORCE_TOKEN = '" + CONFIG.API_TOKEN + "';\n" +
+"\n" +
+"function install() {\n" +
+"  ScriptApp.getProjectTriggers().forEach(function (t) {\n" +
+"    if (t.getHandlerFunction() === 'merchforcePing') ScriptApp.deleteTrigger(t);\n" +
+"  });\n" +
+"  ScriptApp.newTrigger('merchforcePing')\n" +
+"    .forSpreadsheet(SpreadsheetApp.getActive()).onEdit().create();\n" +
+"}\n" +
+"\n" +
+"function merchforcePing(e) {\n" +
+"  UrlFetchApp.fetch(MERCHFORCE_URL, {\n" +
+"    method: 'post', contentType: 'text/plain', muteHttpExceptions: true,\n" +
+"    payload: JSON.stringify({ action: 'syncPing', token: MERCHFORCE_TOKEN,\n" +
+"                              sheet: SpreadsheetApp.getActive().getId() })\n" +
+"  });\n" +
+"}";
+  openDrawer(
+    '<h2 style="margin:0 0 4px">⚡ Instant sync</h2>' +
+    '<p class="note" style="margin:0 0 14px">Google Sheets cannot push changes out by itself, so instant sync works by installing this tiny connector ON the supplier\'s sheet. The moment anyone edits a cell, it pings Merchforce and the mapped fields are pulled within seconds (pings are debounced to one per 45 seconds per sheet).</p>' +
+    '<ol style="margin:0 0 14px;padding-left:20px;font-size:14px;line-height:1.7">' +
+      '<li>Open the supplier\'s stock sheet (anyone with <b>edit</b> access can do this — you or the supplier).</li>' +
+      '<li>Menu: <b>Extensions → Apps Script</b>.</li>' +
+      '<li>Delete whatever is in the editor and paste the script below.</li>' +
+      '<li>Save, pick the <b>install</b> function in the toolbar, click <b>Run</b>, and approve the authorization.</li>' +
+    '</ol>' +
+    '<p class="note">Done once per sheet. The sheet must already be linked as a mapping here, or pings are ignored. Keep a scheduled auto-sync on as a safety net.</p>' +
+    '<textarea id="lsCode" readonly style="width:100%;height:280px;font-family:ui-monospace,monospace;font-size:12px;border:1px solid var(--line);border-radius:10px;padding:12px;white-space:pre"></textarea>' +
+    '<button class="btn primary" id="lsCopy" style="width:100%;justify-content:center;margin-top:10px">Copy script</button>');
+  $('lsCode').value = code;
+  $('lsCopy').onclick = function () {
+    $('lsCode').select();
+    try { navigator.clipboard.writeText(code); } catch (e) { document.execCommand('copy'); }
+    toast('Copied — paste it into Extensions → Apps Script on the sheet');
   };
 }
 
