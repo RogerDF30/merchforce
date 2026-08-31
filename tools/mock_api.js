@@ -22,13 +22,13 @@ const db = {
     site_name: 'Merchforce', tagline: 'Bulk merchandise, direct from stock',
     access_mode: 'open', show_stock_numbers: 'badge', notify_email: '',
     low_stock_threshold: '25', currency: 'INR', primary_color: '#1a1f36',
-    sync_sheet_id: '', sync_tab: '', sync_sku_col: '', sync_stock_col: '', sync_auto: 'off', sync_last: ''
+    sync_sheet_id: '', sync_tab: '', sync_sku_col: '', sync_stock_col: '', sync_auto: 'off', sync_last: '', sync_maps: '[]'
   },
   brands: seed.brands.map(b => ({ brand_id: b.id, name: b.name, logo_url: '', description: '', active: 'TRUE', sort: b.sort })),
   products: seed.products.map(p => ({
     sku: p.sku, name: p.name, brand_id: p.brand_id, category: p.category,
     subcategory: p.sub || '', description: p.desc, specs: (p.specs || []).join('|'),
-    image_urls: p.image || '', moq: p.moq, gst_rate: 18, lead_time: p.lead,
+    image_urls: p.image || '', moq: p.moq, gst_rate: 18, mrp: p.mrp || '', lead_time: p.lead,
     on_hand: p.stock, reserved: 0, safety_stock: Math.round(p.stock * 0.03),
     reorder_point: Math.round(p.stock * 0.1), visible: 'TRUE', show_price: 'TRUE'
   })),
@@ -91,7 +91,7 @@ function pub(p) {
     sku: p.sku, name: p.name, brand: p.brand_id, category: p.category, subcategory: p.subcategory,
     description: p.description, specs: p.specs.split('|').filter(Boolean),
     images: p.image_urls.split('|').filter(Boolean), moq: p.moq, gst: p.gst_rate,
-    lead_time: p.lead_time, stock: db.settings.show_stock_numbers === 'exact' ? a : null,
+    lead_time: p.lead_time, mrp: Number(p.mrp) || null, stock: db.settings.show_stock_numbers === 'exact' ? a : null,
     stock_badge: a <= 0 ? 'out' : a <= low ? 'low' : 'in',
     show_price: p.show_price === 'TRUE', tiers: p.show_price === 'TRUE' ? tiersOf(p.sku) : []
   };
@@ -179,7 +179,7 @@ const ACTIONS = {
     products: db.products.map(p => ({
       sku: p.sku, name: p.name, brand_id: p.brand_id, category: p.category, subcategory: p.subcategory,
       description: p.description, specs: p.specs, images: p.image_urls.split('|').filter(Boolean),
-      moq: p.moq, gst_rate: p.gst_rate, lead_time: p.lead_time, on_hand: p.on_hand, reserved: p.reserved,
+      moq: p.moq, gst_rate: p.gst_rate, mrp: Number(p.mrp) || '', lead_time: p.lead_time, on_hand: p.on_hand, reserved: p.reserved,
       safety_stock: p.safety_stock, reorder_point: p.reorder_point, atp: atp(p),
       visible: p.visible === 'TRUE', show_price: p.show_price === 'TRUE', tiers: tiersOf(p.sku)
     })),
@@ -193,7 +193,7 @@ const ACTIONS = {
     Object.assign(p, {
       name: d.name, brand_id: d.brand_id || '', category: d.category || '', subcategory: d.subcategory || '',
       description: d.description || '', specs: d.specs || '', image_urls: (d.images || []).join('|'),
-      moq: d.moq || 1, gst_rate: d.gst_rate || 0, lead_time: d.lead_time || '', on_hand: d.on_hand || 0,
+      moq: d.moq || 1, gst_rate: d.gst_rate || 0, mrp: d.mrp || '', lead_time: d.lead_time || '', on_hand: d.on_hand || 0,
       safety_stock: d.safety_stock || 0, reorder_point: d.reorder_point || 0,
       visible: d.visible ? 'TRUE' : 'FALSE', show_price: d.show_price ? 'TRUE' : 'FALSE'
     });
@@ -281,19 +281,37 @@ const ACTIONS = {
         top_searches: topKeys(searches), searches_with_nothing: topKeys(searchesNil) } };
   },
   adminSyncPreview: b => (String(b.sheet||'').length > 5
-    ? { ok: true, sheet_id: 'mock-sheet-id', tabs: ['Stock','Prices'], tab: 'Stock',
-        headers: ['Item Code','Product Name','Warehouse Qty','Rate'],
-        sample: [['URBAN-294','Ebony Bottle','2600','824'],['UG 02','Eco Cork Mug','3900','200'],['B30906','Adidas Polo','450','1199']],
-        rows: 22, owner_hint: 'merchforce-backend@companystore.io' }
+    ? { ok: true, sheet_id: 'mock-sheet-' + String(b.sheet).slice(-6), tabs: ['Wenger Stock','Price List'], tab: b.tab || 'Wenger Stock',
+        headers: ['WWW','Code','Product Name','MRP','Selling Price Excluding GST','Stock'],
+        sample: [['1','URBAN-294','Ebony Bottle','1349','824','2600'],['2','UG 02','Eco Cork Mug','449','200','3900'],['3','B30906','Adidas Polo','2099','1199','450']],
+        rows: 24, owner_hint: 'merchforce-backend@companystore.io' }
     : { ok: false, error: 'Paste the supplier sheet link or ID' }),
-  adminSyncRun: b => {
-    Object.assign(db.settings, { sync_sheet_id: b.sheet || db.settings.sync_sheet_id || 'mock-sheet-id',
-      sync_tab: b.tab || 'Stock', sync_sku_col: b.sku_col || db.settings.sync_sku_col || 'Item Code',
-      sync_stock_col: b.stock_col || db.settings.sync_stock_col || 'Warehouse Qty' });
-    const summary = { ok: true, ts: new Date().toString(), matched: 20, updated: 6, unchanged: 14, unknown: 2, unknown_skus: ['OLD-001','OLD-002'], error: null };
-    db.settings.sync_last = JSON.stringify(summary);
-    return summary;
+  adminSyncMapSave: b => {
+    const maps = JSON.parse(db.settings.sync_maps || '[]');
+    const rec = { brand: b.map.brand || '', sheet: b.map.sheet, tab: b.map.tab || '', sku_col: b.map.sku_col, stock_col: b.map.stock_col, last: null };
+    if (b.index !== undefined && maps[b.index]) { rec.last = maps[b.index].last; maps[b.index] = rec; } else maps.push(rec);
+    db.settings.sync_maps = JSON.stringify(maps);
+    return { ok: true, maps };
   },
+  adminSyncMapDelete: b => {
+    const maps = JSON.parse(db.settings.sync_maps || '[]');
+    maps.splice(b.index, 1);
+    db.settings.sync_maps = JSON.stringify(maps);
+    return { ok: true, maps };
+  },
+  adminSyncRun: b => {
+    const maps = JSON.parse(db.settings.sync_maps || '[]');
+    if (!maps.length) return { ok: false, error: 'No mappings yet — add one first' };
+    const idxs = b.index !== undefined ? [b.index] : maps.map((_, i) => i);
+    const results = idxs.filter(i => maps[i]).map(i => {
+      const summary = { ts: new Date().toString(), matched: 4, updated: 2, unchanged: 2, unknown: 1, off_brand: maps[i].brand ? 1 : 0, unknown_skus: ['OLD-001'], error: null };
+      maps[i].last = summary;
+      return { index: i, brand: maps[i].brand, summary };
+    });
+    db.settings.sync_maps = JSON.stringify(maps);
+    return { ok: true, results, maps };
+  },
+  adminSyncTemplate: () => ({ ok: true, url: 'https://docs.google.com/spreadsheets/d/mock-template', sheet_id: 'mock-template', name: 'Merchforce Stock Template — 31 Aug 2026' }),
   adminSyncSchedule: b => { db.settings.sync_auto = b.mode === 'hourly' ? 'hourly' : 'off'; return { ok: true, mode: db.settings.sync_auto }; },
   adminSettings: b => { if (b.save) Object.assign(db.settings, b.save); return { ok: true, settings: db.settings }; },
   adminExportCsv: b => ({ ok: true, filename: 'mock.csv', csv: 'sku,name\n' + db.products.map(p => p.sku + ',' + JSON.stringify(p.name)).join('\n') })

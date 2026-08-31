@@ -101,7 +101,8 @@ function seedDemo_() {
       on_hand: p.stock, reserved: 0,
       safety_stock: Math.round(p.stock * 0.03),
       reorder_point: Math.round(p.stock * 0.1),
-      visible: 'TRUE', show_price: 'TRUE', created: now_(), updated: now_()
+      visible: 'TRUE', show_price: 'TRUE', created: now_(), updated: now_(),
+      mrp: p.mrp || ''
     });
     (p.tiers || []).forEach(function (t) {
       appendRecord_('PriceTiers', { sku: p.sku, min_qty: t[0], unit_price: t[1] });

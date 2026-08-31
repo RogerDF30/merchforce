@@ -16,7 +16,7 @@ var SHEETS = {
   Products:     ['sku', 'name', 'brand_id', 'category', 'subcategory', 'description',
                  'specs', 'image_urls', 'moq', 'gst_rate', 'lead_time',
                  'on_hand', 'reserved', 'safety_stock', 'reorder_point',
-                 'visible', 'show_price', 'created', 'updated'],
+                 'visible', 'show_price', 'created', 'updated', 'mrp'],
   PriceTiers:   ['sku', 'min_qty', 'unit_price', 'gst'],
   Requests:     ['request_id', 'created', 'status', 'company', 'contact', 'email',
                  'phone', 'gstin', 'notes', 'user_email', 'total_est',
@@ -51,7 +51,8 @@ var DEFAULT_SETTINGS = {
   sync_sku_col: '',
   sync_stock_col: '',
   sync_auto: 'off',             // off | hourly
-  sync_last: ''                 // JSON summary of the last run
+  sync_last: '',                // JSON summary of the last run (legacy single-sheet)
+  sync_maps: '[]'               // JSON array of per-brand mappings (see StockSync.gs)
 };
 
 function props_() { return PropertiesService.getScriptProperties(); }

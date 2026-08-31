@@ -44,7 +44,10 @@ function doPost(e) {
       adminExportCsv:     fnAdminExportCsv_,
       adminSyncPreview:   fnAdminSyncPreview_,
       adminSyncRun:       fnAdminSyncRun_,
-      adminSyncSchedule:  fnAdminSyncSchedule_
+      adminSyncSchedule:  fnAdminSyncSchedule_,
+      adminSyncMapSave:   fnAdminSyncMapSave_,
+      adminSyncMapDelete: fnAdminSyncMapDelete_,
+      adminSyncTemplate:  fnAdminSyncTemplate_
     };
 
     if (PUBLIC[p.action]) {

@@ -65,7 +65,8 @@ var SEED_DATA = {
      824
     ]
    ],
-   "brand_id": "BR-URBANGEA"
+   "brand_id": "BR-URBANGEA",
+   "mrp": 1349
   },
   {
    "sku": "UG 02",
@@ -97,7 +98,8 @@ var SEED_DATA = {
      200
     ]
    ],
-   "brand_id": "BR-URBANGEA"
+   "brand_id": "BR-URBANGEA",
+   "mrp": 449
   },
   {
    "sku": "UG-DB59",
@@ -131,7 +133,8 @@ var SEED_DATA = {
      909
     ]
    ],
-   "brand_id": "BR-URBANGEA"
+   "brand_id": "BR-URBANGEA",
+   "mrp": 1699
   },
   {
    "sku": "URBAN-298",
@@ -165,7 +168,8 @@ var SEED_DATA = {
      560
     ]
    ],
-   "brand_id": "BR-URBANGEA"
+   "brand_id": "BR-URBANGEA",
+   "mrp": 1399
   },
   {
    "sku": "5324866820",
@@ -199,7 +203,8 @@ var SEED_DATA = {
      7499
     ]
    ],
-   "brand_id": "BR-DAILYOBJ"
+   "brand_id": "BR-DAILYOBJ",
+   "mrp": 12499
   },
   {
    "sku": "5324866819",
@@ -233,7 +238,8 @@ var SEED_DATA = {
      7499
     ]
    ],
-   "brand_id": "BR-DAILYOBJ"
+   "brand_id": "BR-DAILYOBJ",
+   "mrp": 12699
   },
   {
    "sku": "9578398628",
@@ -267,7 +273,8 @@ var SEED_DATA = {
      5999
     ]
    ],
-   "brand_id": "BR-DAILYOBJ"
+   "brand_id": "BR-DAILYOBJ",
+   "mrp": 9199
   },
   {
    "sku": "6111990716",
@@ -301,7 +308,8 @@ var SEED_DATA = {
      5249
     ]
    ],
-   "brand_id": "BR-DAILYOBJ"
+   "brand_id": "BR-DAILYOBJ",
+   "mrp": 8799
   },
   {
    "sku": "B30906",
@@ -335,7 +343,8 @@ var SEED_DATA = {
      1199
     ]
    ],
-   "brand_id": "BR-ADIDAS"
+   "brand_id": "BR-ADIDAS",
+   "mrp": 2099
   },
   {
    "sku": "DN3093",
@@ -368,7 +377,8 @@ var SEED_DATA = {
      1350
     ]
    ],
-   "brand_id": "BR-ADIDAS"
+   "brand_id": "BR-ADIDAS",
+   "mrp": 2499
   },
   {
    "sku": "DN3224",
@@ -401,7 +411,8 @@ var SEED_DATA = {
      1200
     ]
    ],
-   "brand_id": "BR-ADIDAS"
+   "brand_id": "BR-ADIDAS",
+   "mrp": 1799
   },
   {
    "sku": "IY3820",
@@ -434,7 +445,8 @@ var SEED_DATA = {
      1125
     ]
    ],
-   "brand_id": "BR-ADIDAS"
+   "brand_id": "BR-ADIDAS",
+   "mrp": 1799
   },
   {
    "sku": "1953184",
@@ -468,7 +480,8 @@ var SEED_DATA = {
      265
     ]
    ],
-   "brand_id": "BR-PARKER"
+   "brand_id": "BR-PARKER",
+   "mrp": 399
   },
   {
    "sku": "9000017248",
@@ -502,7 +515,8 @@ var SEED_DATA = {
      300
     ]
    ],
-   "brand_id": "BR-PARKER"
+   "brand_id": "BR-PARKER",
+   "mrp": 799
   },
   {
    "sku": "PARK-002",
@@ -536,7 +550,8 @@ var SEED_DATA = {
      165
     ]
    ],
-   "brand_id": "BR-PARKER"
+   "brand_id": "BR-PARKER",
+   "mrp": 289
   },
   {
    "sku": "8902298161024",
@@ -570,7 +585,8 @@ var SEED_DATA = {
      1500
     ]
    ],
-   "brand_id": "BR-PARKER"
+   "brand_id": "BR-PARKER",
+   "mrp": 2199
   },
   {
    "sku": "BT380BLK130",
@@ -604,7 +620,8 @@ var SEED_DATA = {
      345
     ]
    ],
-   "brand_id": "BR-BOROSIL"
+   "brand_id": "BR-BOROSIL",
+   "mrp": 849
   },
   {
    "sku": "BTU0500BLK36",
@@ -638,7 +655,8 @@ var SEED_DATA = {
      746
     ]
    ],
-   "brand_id": "BR-BOROSIL"
+   "brand_id": "BR-BOROSIL",
+   "mrp": 1399
   },
   {
    "sku": "BT700BLK104",
@@ -672,7 +690,8 @@ var SEED_DATA = {
      790
     ]
    ],
-   "brand_id": "BR-BOROSIL"
+   "brand_id": "BR-BOROSIL",
+   "mrp": 1399
   },
   {
    "sku": "B0560TI01",
@@ -706,7 +725,8 @@ var SEED_DATA = {
      1045
     ]
    ],
-   "brand_id": "BR-BOROSIL"
+   "brand_id": "BR-BOROSIL",
+   "mrp": 1799
   },
   {
    "sku": "CSUN-0064",
@@ -740,7 +760,8 @@ var SEED_DATA = {
      66
     ]
    ],
-   "brand_id": "BR-SOIL"
+   "brand_id": "BR-SOIL",
+   "mrp": 149
   },
   {
    "sku": "CSUN-0124",
@@ -773,7 +794,8 @@ var SEED_DATA = {
      104
     ]
    ],
-   "brand_id": "BR-SOIL"
+   "brand_id": "BR-SOIL",
+   "mrp": 229
   },
   {
    "sku": "CSUN-1552",
@@ -807,7 +829,8 @@ var SEED_DATA = {
      86
     ]
    ],
-   "brand_id": "BR-SOIL"
+   "brand_id": "BR-SOIL",
+   "mrp": 229
   },
   {
    "sku": "CSUN-0276",
@@ -841,7 +864,8 @@ var SEED_DATA = {
      104
     ]
    ],
-   "brand_id": "BR-SOIL"
+   "brand_id": "BR-SOIL",
+   "mrp": 229
   }
  ]
 };

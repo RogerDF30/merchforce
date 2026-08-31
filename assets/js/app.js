@@ -65,7 +65,8 @@ function badgeHtml(p) {
 function fromPrice(p) {
   if (!p.show_price || !p.tiers.length) return '';
   var min = p.tiers[p.tiers.length - 1].price;
-  return '<span class="price">' + inr(min) + ' <small>/ unit</small></span>';
+  var mrp = (p.mrp && p.mrp > min) ? '<span class="mrp">' + inr(p.mrp) + '</span> ' : '';
+  return '<span class="price">' + mrp + inr(min) + ' <small>/ unit</small></span>';
 }
 function tierFor(p, qty) {
   var price = p.tiers.length ? p.tiers[0].price : 0;
@@ -290,6 +291,10 @@ function openProduct(p) {
       '<h2>' + esc(p.name) + '</h2>' +
       '<div class="sku">SKU ' + esc(p.sku) + ' · ' + badgeHtml(p) +
         (p.lead_time ? ' · Lead time ' + esc(p.lead_time) : '') + '</div>' +
+      (p.show_price && p.mrp && p.tiers.length && p.mrp > p.tiers[p.tiers.length - 1].price
+        ? '<div class="mrp-line"><span class="mrp">MRP ' + inr(p.mrp) + '</span>' +
+          '<span class="save">up to ' + Math.round((1 - p.tiers[p.tiers.length - 1].price / p.mrp) * 100) + '% off on bulk</span></div>'
+        : '') +
       '<p class="desc">' + esc(p.description) + '</p>' +
       (p.specs.length ? '<ul class="specs">' + p.specs.map(function (s) {
         var kv = s.split(':');

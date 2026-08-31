@@ -208,7 +208,7 @@ function renderCatalog() {
       '<button class="btn small" id="cExport">Export CSV</button>' +
       '<button class="btn primary small" id="cNew">+ Product</button></div>' +
     '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
-      '<th></th><th>SKU</th><th>Product</th><th>Brand</th><th class="num">MOQ</th><th class="num">From</th><th class="num">On hand</th><th class="num">Reserved</th><th class="num">ATP</th><th>Visible</th>' +
+      '<th></th><th>SKU</th><th>Product</th><th>Brand</th><th class="num">MOQ</th><th class="num">MRP</th><th class="num">From</th><th class="num">On hand</th><th class="num">Reserved</th><th class="num">ATP</th><th>Visible</th>' +
     '</tr></thead><tbody id="cRows"></tbody></table></div>';
   $('cNew').onclick = function () { editProduct(null); };
   $('cExport').onclick = exportProducts;
@@ -232,6 +232,7 @@ function paintCatalogRows() {
       '<td>' + esc(p.sku) + '</td>' +
       '<td><b>' + esc(p.name) + '</b><br><small style="color:var(--ink-3)">' + esc(p.category) + '</small></td>' +
       '<td>' + esc(brandName(p.brand_id)) + '</td><td class="num">' + p.moq + '</td>' +
+      '<td class="num" style="text-decoration:line-through;color:var(--ink-3)">' + (p.mrp ? inr(p.mrp) : '—') + '</td>' +
       '<td class="num">' + (from ? inr(from) : '—') + '</td>' +
       '<td class="num">' + qty(p.on_hand) + '</td><td class="num">' + qty(p.reserved) + '</td>' +
       '<td class="num" style="font-weight:800;color:' + (low ? 'var(--bad)' : 'inherit') + '">' + qty(p.atp) + (low ? ' ⚠' : '') + '</td>' +
@@ -245,7 +246,7 @@ function paintCatalogRows() {
 function editProduct(p) {
   var isNew = !p;
   p = p || { sku: '', name: '', brand_id: '', category: '', subcategory: '', description: '', specs: '',
-             images: [], moq: 1, gst_rate: 18, lead_time: '', on_hand: 0, reserved: 0,
+             images: [], moq: 1, gst_rate: 18, mrp: '', lead_time: '', on_hand: 0, reserved: 0,
              safety_stock: 0, reorder_point: 0, visible: true, show_price: true,
              tiers: [{ min: 1, price: 0, gst: '' }] };
   var draft = JSON.parse(JSON.stringify(p));
@@ -273,6 +274,7 @@ function editProduct(p) {
     '<div class="f2">' +
       '<div class="field"><label>MOQ (1 = no minimum)</label><input id="eMoq" type="number" min="1" value="' + draft.moq + '"></div>' +
       '<div class="field"><label>Product GST %</label><input id="eGst" type="number" min="0" step="0.01" value="' + draft.gst_rate + '"></div>' +
+      '<div class="field"><label>MRP ₹ (shown struck through)</label><input id="eMrp" type="number" min="0" value="' + (p.mrp || '') + '"></div>' +
       '<div class="field"><label>Lead time</label><input id="eLead" value="' + esc(p.lead_time) + '"></div>' +
       '<div class="field"><label>On hand</label><input id="eOnHand" type="number" value="' + p.on_hand + '"></div>' +
       '<div class="field"><label>Safety stock</label><input id="eSafety" type="number" value="' + p.safety_stock + '"></div>' +
@@ -375,7 +377,7 @@ function editProduct(p) {
       description: $('eDesc').value.trim(),
       specs: $('eSpecs').value.split('\n').map(function (s) { return s.trim(); }).filter(String).join('|'),
       images: images,
-      moq: moq, gst_rate: Number($('eGst').value), lead_time: $('eLead').value.trim(),
+      moq: moq, gst_rate: Number($('eGst').value), mrp: Number($('eMrp').value) || '', lead_time: $('eLead').value.trim(),
       on_hand: Number($('eOnHand').value), safety_stock: Number($('eSafety').value),
       reorder_point: Number($('eReorder').value),
       visible: $('eVisible').checked, show_price: $('eShowPrice').checked,
@@ -720,111 +722,197 @@ function renderSettings() {
 }
 
 function renderSyncCard(s) {
-  var last = null;
-  try { last = JSON.parse(s.sync_last || 'null'); } catch (e) {}
-  return section('Stock sync', 'The supplier keeps managing stock in their own Google Sheet. Link it here and Merchforce pulls on-hand quantities from it — manually or every hour.') +
+  var maps = [];
+  try { maps = JSON.parse(s.sync_maps || '[]'); } catch (e) {}
+  var rows = maps.map(function (m, i) {
+    var last = m.last;
+    var lastTxt = !last ? '—'
+      : last.error ? '<span style="color:var(--bad)">' + esc(last.error).slice(0, 60) + '</span>'
+      : esc(String(last.ts).slice(4, 21)) + ' · ' + last.updated + ' updated' +
+        (last.unknown ? ', ' + last.unknown + ' unknown' : '') +
+        (last.off_brand ? ', ' + last.off_brand + ' off-brand' : '');
+    return '<tr><td><b>' + esc(m.brand ? brandNameSafe(m.brand) : 'All brands') + '</b></td>' +
+      '<td style="font-size:12px;color:var(--ink-3)">…' + esc(String(m.sheet).slice(-8)) + (m.tab ? ' · ' + esc(m.tab) : '') + '</td>' +
+      '<td>' + esc(m.sku_col) + ' → SKU<br>' + esc(m.stock_col) + ' → Stock</td>' +
+      '<td style="font-size:12.5px">' + lastTxt + '</td>' +
+      '<td style="white-space:nowrap"><button class="btn small" data-sync="' + i + '">Sync</button> ' +
+      '<button class="btn ghost small" data-edit="' + i + '">Edit</button> ' +
+      '<button class="btn ghost small" data-del="' + i + '" style="color:var(--bad)">✕</button></td></tr>';
+  }).join('');
+  return section('Stock sync — per brand',
+      'The supplier keeps managing stock in their own Google Sheets, one per brand (like the Wenger stock sheet). ' +
+      'Map each brand to its sheet; a brand mapping only ever updates that brand\'s products.') +
     '<div class="panel2">' +
-      '<div class="f2">' +
-        '<div class="field"><label>Supplier sheet link or ID</label><input id="ySheet" value="' + esc(s.sync_sheet_id) + '" placeholder="https://docs.google.com/spreadsheets/d/…"></div>' +
-        '<div class="field"><label>Tab (blank = first tab)</label><input id="yTab" value="' + esc(s.sync_tab) + '"></div>' +
+      (maps.length
+        ? '<div class="tbl-wrap" style="margin-bottom:14px"><table class="tbl"><thead><tr>' +
+          '<th>Brand</th><th>Sheet</th><th>Mapping</th><th>Last sync</th><th></th>' +
+          '</tr></thead><tbody id="yRows">' + rows + '</tbody></table></div>'
+        : '<p class="note">No sheets linked yet. Add the first brand mapping, or generate a ready-made template the supplier can copy and maintain.</p>') +
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+        '<button class="btn primary small" id="yAdd">+ Add brand mapping</button>' +
+        (maps.length > 1 ? '<button class="btn small" id="ySyncAll">Sync all now</button>' : '') +
+        '<button class="btn small" id="yTemplate">Generate template sheet</button>' +
+        '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-left:auto">' +
+          '<input type="checkbox" id="yAuto"' + (s.sync_auto === 'hourly' ? ' checked' : '') + '> Auto-sync every hour</label>' +
       '</div>' +
-      '<p class="note">The sheet must be shared (Viewer is enough) with the Merchforce backend account. Column headers are read from row 1.</p>' +
-      '<button class="btn small" id="yLoad">Load sheet</button> ' +
-      '<span id="yStatus" style="font-size:13px;color:var(--ink-3)"></span>' +
-      '<div id="yMap" style="margin-top:14px">' +
-        (s.sync_sku_col
-          ? '<p class="note">Current mapping: SKU ← <b>' + esc(s.sync_sku_col) + '</b> · Stock ← <b>' + esc(s.sync_stock_col) + '</b></p>'
-          : '') +
-      '</div>' +
-      '<div id="yActions" style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">' +
-        (s.sync_sheet_id && s.sync_sku_col
-          ? '<button class="btn primary small" id="ySyncNow">Sync now</button>' +
-            '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px">' +
-            '<input type="checkbox" id="yAuto"' + (s.sync_auto === 'hourly' ? ' checked' : '') + '> Auto-sync every hour</label>'
-          : '') +
-      '</div>' +
-      (last ? '<p class="note" style="margin-top:10px">Last sync ' + esc(String(last.ts).slice(0, 24)) + ' — ' +
-        (last.error ? '<span style="color:var(--bad)">' + esc(last.error) + '</span>'
-          : last.updated + ' updated, ' + last.unchanged + ' unchanged, ' + last.unknown + ' unknown SKU' + (last.unknown === 1 ? '' : 's') +
-            (last.unknown_skus && last.unknown_skus.length ? ' (' + esc(last.unknown_skus.join(', ')) + ')' : '')) + '</p>' : '') +
+      '<p class="note" id="yTplOut" style="margin-top:10px"></p>' +
     '</div>';
 }
 
-function wireSyncCard() {
-  var preview = null;
-  $('yLoad').onclick = function () {
-    $('yStatus').textContent = 'Opening sheet…';
-    api('adminSyncPreview', { sheet: $('ySheet').value.trim(), tab: $('yTab').value.trim() })
-      .then(function (res) {
-        preview = res;
-        $('yStatus').textContent = res.rows + ' rows · tab "' + res.tab + '"';
-        var opts = res.headers.map(function (h) { return '<option>' + esc(h) + '</option>'; }).join('');
-        $('yMap').innerHTML =
-          '<div class="f2">' +
-            '<div class="field"><label>SKU column</label><select id="yCol1"><option value="">—</option>' + opts + '</select></div>' +
-            '<div class="field"><label>Stock column</label><select id="yCol2"><option value="">—</option>' + opts + '</select></div>' +
-          '</div>' +
-          '<div class="tbl-wrap" style="max-height:180px;overflow:auto"><table class="tbl"><thead><tr>' +
-            res.headers.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') +
-          '</tr></thead><tbody>' +
-            res.sample.map(function (row) {
-              return '<tr>' + row.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>';
-            }).join('') +
-          '</tbody></table></div>';
-        // best-guess defaults
-        var guess = function (sel, words) {
-          var m = res.headers.filter(function (h) {
-            return words.some(function (w) { return h.toLowerCase().indexOf(w) >= 0; });
-          })[0];
-          if (m) $(sel).value = m;
-        };
-        guess('yCol1', ['sku', 'code', 'item']);
-        guess('yCol2', ['stock', 'qty', 'quantity', 'on hand', 'available']);
-        $('yActions').innerHTML = '<button class="btn primary small" id="ySyncNow">Save mapping & sync now</button>' +
-          '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px">' +
-          '<input type="checkbox" id="yAuto"' + (A.settings.sync_auto === 'hourly' ? ' checked' : '') + '> Auto-sync every hour</label>';
-        wireSyncActions(preview);
-      })
-      .catch(function (e) { $('yStatus').innerHTML = '<span style="color:var(--bad)">' + esc(e.message) + '</span>'; });
-  };
-  wireSyncActions(null);
+function brandNameSafe(id) {
+  var b = A.brands.filter(function (x) { return x.id === id; })[0];
+  return b ? b.name : id;
 }
 
-function wireSyncActions(preview) {
-  var btn = $('ySyncNow');
-  if (btn) {
-    btn.onclick = function () {
-      var body = {};
-      if (preview) {
-        body = { sheet: preview.sheet_id, tab: preview.tab, sku_col: $('yCol1').value, stock_col: $('yCol2').value };
-        if (!body.sku_col || !body.stock_col) { toast('Pick the SKU and stock columns first'); return; }
-      }
-      btn.disabled = true;
-      btn.textContent = 'Syncing…';
-      api('adminSyncRun', body).then(function (res) {
-        toast(res.updated + ' updated · ' + res.unknown + ' unknown SKUs');
-        return api('adminSettings', {});
-      }).then(function (res) {
-        A.settings = res.settings;
-        renderSettings();
-      }).catch(function (e) {
-        toast(e.message);
-        btn.disabled = false;
-        btn.textContent = 'Sync now';
-      });
+function refreshSettings_() {
+  return api('adminSettings', {}).then(function (res) {
+    A.settings = res.settings;
+    renderSettings();
+  });
+}
+
+function wireSyncCard() {
+  var ensureBrands = A.brands.length ? Promise.resolve() : api('adminCatalog').then(function (res) {
+    A.products = res.products; A.brands = res.brands;
+  });
+
+  $('yAdd').onclick = function () {
+    ensureBrands.then(function () { openMapEditor(null, null); });
+  };
+  var syncAll = $('ySyncAll');
+  if (syncAll) {
+    syncAll.onclick = function () {
+      syncAll.disabled = true; syncAll.textContent = 'Syncing…';
+      api('adminSyncRun', {}).then(function (res) {
+        var tot = res.results.reduce(function (s, r) { return s + (r.summary.updated || 0); }, 0);
+        toast(tot + ' products updated across ' + res.results.length + ' sheets');
+        return refreshSettings_();
+      }).catch(function (e) { toast(e.message); syncAll.disabled = false; syncAll.textContent = 'Sync all now'; });
     };
   }
+  $('yTemplate').onclick = function () {
+    $('yTemplate').disabled = true;
+    $('yTplOut').textContent = 'Building the template sheet…';
+    api('adminSyncTemplate', {}).then(function (res) {
+      $('yTemplate').disabled = false;
+      $('yTplOut').innerHTML = 'Template ready: <a href="' + esc(res.url) + '" target="_blank">' + esc(res.name) + ' ↗</a> — one tab per brand, in the supplier\'s format (Code · Product Name · MRP · Selling Price Excluding GST · Stock). Ask the supplier to File → Make a copy and maintain theirs.';
+    }).catch(function (e) { $('yTemplate').disabled = false; $('yTplOut').textContent = e.message; });
+  };
   var auto = $('yAuto');
   if (auto) {
     auto.onchange = function () {
       api('adminSyncSchedule', { mode: auto.checked ? 'hourly' : 'off' })
         .then(function (res) {
           A.settings.sync_auto = res.mode;
-          toast(res.mode === 'hourly' ? 'Auto-sync on — pulls every hour' : 'Auto-sync off');
+          toast(res.mode === 'hourly' ? 'Auto-sync on — pulls every sheet hourly' : 'Auto-sync off');
         })
         .catch(function (e) { toast(e.message); auto.checked = !auto.checked; });
     };
   }
+  var tb = $('yRows');
+  if (tb) {
+    tb.querySelectorAll('button[data-sync]').forEach(function (b) {
+      b.onclick = function () {
+        b.disabled = true; b.textContent = '…';
+        api('adminSyncRun', { index: Number(b.dataset.sync) }).then(function (res) {
+          var s = res.results[0].summary;
+          toast(s.error ? s.error : s.updated + ' updated, ' + s.unknown + ' unknown');
+          return refreshSettings_();
+        }).catch(function (e) { toast(e.message); b.disabled = false; b.textContent = 'Sync'; });
+      };
+    });
+    tb.querySelectorAll('button[data-edit]').forEach(function (b) {
+      b.onclick = function () {
+        var maps = JSON.parse(A.settings.sync_maps || '[]');
+        ensureBrands.then(function () { openMapEditor(maps[Number(b.dataset.edit)], Number(b.dataset.edit)); });
+      };
+    });
+    tb.querySelectorAll('button[data-del]').forEach(function (b) {
+      b.onclick = function () {
+        api('adminSyncMapDelete', { index: Number(b.dataset.del) })
+          .then(refreshSettings_).catch(function (e) { toast(e.message); });
+      };
+    });
+  }
+}
+
+/* Add/edit one brand→sheet mapping, in the drawer. */
+function openMapEditor(m, index) {
+  var isNew = !m;
+  m = m || { brand: '', sheet: '', tab: '', sku_col: '', stock_col: '' };
+  openDrawer(
+    '<h2 style="margin:0 0 4px">' + (isNew ? 'Link a brand sheet' : 'Edit mapping') + '</h2>' +
+    '<p class="note" style="margin:0 0 14px">Share the sheet (Viewer is enough) with the Merchforce backend account first. Headers are read from row 1.</p>' +
+    '<div class="field"><label>Brand</label><select id="zBrand">' +
+      '<option value=""' + (m.brand ? '' : ' selected') + '>All brands (no restriction)</option>' +
+      A.brands.map(function (b) {
+        return '<option value="' + esc(b.id) + '"' + (b.id === m.brand ? ' selected' : '') + '>' + esc(b.name) + '</option>';
+      }).join('') + '</select></div>' +
+    '<div class="field"><label>Sheet link or ID *</label><input id="zSheet" value="' + esc(m.sheet) + '" placeholder="https://docs.google.com/spreadsheets/d/…"></div>' +
+    '<div class="field"><label>Tab (blank = first tab)</label><input id="zTab" value="' + esc(m.tab) + '"></div>' +
+    '<button class="btn small" id="zLoad">Load sheet</button> ' +
+    '<span id="zStatus" style="font-size:13px;color:var(--ink-3)"></span>' +
+    '<div id="zMap" style="margin-top:14px">' +
+      (m.sku_col ? '<p class="note">Current mapping: SKU ← <b>' + esc(m.sku_col) + '</b> · Stock ← <b>' + esc(m.stock_col) + '</b>. Load the sheet to change it.</p>' : '') +
+    '</div>' +
+    '<div class="form-err" id="mErr"></div>' +
+    '<button class="btn primary" id="zSave" style="width:100%;justify-content:center;margin-top:10px"' +
+      (m.sku_col ? '' : ' disabled') + '>Save mapping & sync now</button>');
+
+  var cols = { sku: m.sku_col, stock: m.stock_col };
+  $('zLoad').onclick = function () {
+    $('zStatus').textContent = 'Opening sheet…';
+    api('adminSyncPreview', { sheet: $('zSheet').value.trim(), tab: $('zTab').value.trim() })
+      .then(function (res) {
+        $('zStatus').textContent = res.rows + ' rows · tab "' + res.tab + '"' +
+          (res.tabs.length > 1 ? ' · tabs: ' + res.tabs.join(', ') : '');
+        var opts = function (sel) {
+          return res.headers.map(function (h) {
+            return '<option' + (h === sel ? ' selected' : '') + '>' + esc(h) + '</option>';
+          }).join('');
+        };
+        $('zMap').innerHTML =
+          '<div class="f2">' +
+            '<div class="field"><label>SKU column</label><select id="zCol1"><option value="">—</option>' + opts(cols.sku) + '</select></div>' +
+            '<div class="field"><label>Stock column</label><select id="zCol2"><option value="">—</option>' + opts(cols.stock) + '</select></div>' +
+          '</div>' +
+          '<div class="tbl-wrap" style="max-height:170px;overflow:auto"><table class="tbl"><thead><tr>' +
+            res.headers.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') +
+          '</tr></thead><tbody>' +
+            res.sample.map(function (row) {
+              return '<tr>' + row.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>';
+            }).join('') + '</tbody></table></div>';
+        var guess = function (sel, words) {
+          if ($(sel).value) return;
+          var hit = res.headers.filter(function (h) {
+            return words.some(function (w) { return h.toLowerCase().indexOf(w) >= 0; });
+          })[0];
+          if (hit) $(sel).value = hit;
+        };
+        guess('zCol1', ['sku', 'code', 'item']);
+        guess('zCol2', ['stock', 'qty', 'quantity', 'on hand', 'available']);
+        $('zSave').disabled = false;
+      })
+      .catch(function (e) { $('zStatus').innerHTML = '<span style="color:var(--bad)">' + esc(e.message) + '</span>'; });
+  };
+
+  $('zSave').onclick = function () {
+    var skuCol = $('zCol1') ? $('zCol1').value : cols.sku;
+    var stockCol = $('zCol2') ? $('zCol2').value : cols.stock;
+    if (!skuCol || !stockCol) { $('mErr').textContent = 'Pick the SKU and stock columns.'; return; }
+    $('zSave').disabled = true;
+    var payload = { map: { brand: $('zBrand').value, sheet: $('zSheet').value.trim(), tab: $('zTab').value.trim(), sku_col: skuCol, stock_col: stockCol } };
+    if (index !== null && index !== undefined) payload.index = index;
+    api('adminSyncMapSave', payload).then(function (res) {
+      var idx = (index !== null && index !== undefined) ? index : res.maps.length - 1;
+      return api('adminSyncRun', { index: idx });
+    }).then(function (res) {
+      var s = res.results[0].summary;
+      toast(s.error ? s.error : 'Synced: ' + s.updated + ' updated, ' + s.unknown + ' unknown');
+      closeDrawer();
+      return refreshSettings_();
+    }).catch(function (e) { $('mErr').textContent = e.message; $('zSave').disabled = false; });
+  };
 }
 
 /* ---------- drawer ---------- */

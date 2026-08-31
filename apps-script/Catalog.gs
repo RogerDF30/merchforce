@@ -39,6 +39,7 @@ function publicProduct_(pr, tiersBySku, settings) {
     specs: String(pr.specs || '').split('|').filter(String),
     images: String(pr.image_urls || '').split('|').filter(String),
     moq: toNum_(pr.moq), gst: toNum_(pr.gst_rate), lead_time: pr.lead_time,
+    mrp: toNum_(pr.mrp) || null,
     stock: settings.show_stock_numbers === 'exact' ? atp : null,
     stock_badge: atp <= 0 ? 'out' : (atp <= low ? 'low' : 'in'),
     show_price: showPrice,
