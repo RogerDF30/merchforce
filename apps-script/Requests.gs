@@ -23,7 +23,7 @@ function fnRequestSubmit_(p) {
   for (var i = 0; i < lines.length; i++) {
     var ln = lines[i];
     var pr = products[ln.sku];
-    if (!pr || String(pr.visible) !== 'TRUE') return err_('Unknown product: ' + ln.sku);
+    if (!pr || !isTrue_(pr.visible)) return err_('Unknown product: ' + ln.sku);
     var qty = Math.floor(toNum_(ln.qty));
     if (qty < toNum_(pr.moq)) return err_(pr.name + ': minimum order is ' + pr.moq);
     var price = 0;

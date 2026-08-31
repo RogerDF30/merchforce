@@ -4,14 +4,14 @@
 function fnSite_(p) {
   var s = getSettings_();
   var brands = readRows_('Brands')
-    .filter(function (b) { return String(b.active) === 'TRUE'; })
+    .filter(function (b) { return isTrue_(b.active); })
     .sort(function (a, b) { return toNum_(a.sort) - toNum_(b.sort); })
     .map(function (b) {
       return { id: b.brand_id, name: b.name, logo: b.logo_url, desc: b.description };
     });
   var cats = {};
   readRows_('Products').forEach(function (pr) {
-    if (String(pr.visible) !== 'TRUE') return;
+    if (!isTrue_(pr.visible)) return;
     if (!cats[pr.category]) cats[pr.category] = {};
     if (pr.subcategory) cats[pr.category][pr.subcategory] = 1;
   });
@@ -31,7 +31,7 @@ function fnSite_(p) {
 function publicProduct_(pr, tiersBySku, settings) {
   var atp = atp_(pr);
   var low = toNum_(settings.low_stock_threshold);
-  var showPrice = String(pr.show_price) === 'TRUE';
+  var showPrice = isTrue_(pr.show_price);
   return {
     sku: pr.sku, name: pr.name, brand: pr.brand_id,
     category: pr.category, subcategory: pr.subcategory,
@@ -62,7 +62,7 @@ function fnCatalog_(p) {
   });
 
   var items = readRows_('Products')
-    .filter(function (pr) { return String(pr.visible) === 'TRUE'; })
+    .filter(function (pr) { return isTrue_(pr.visible); })
     .map(function (pr) { return publicProduct_(pr, tiers, s); });
 
   var payload = { ok: true, products: items };
@@ -73,7 +73,7 @@ function fnCatalog_(p) {
 function fnProduct_(p) {
   var s = getSettings_();
   var row = readRows_('Products').filter(function (r) { return r.sku === p.sku; })[0];
-  if (!row || String(row.visible) !== 'TRUE') return err_('Not found');
+  if (!row || !isTrue_(row.visible)) return err_('Not found');
   var tiers = {};
   tiers[p.sku] = readRows_('PriceTiers')
     .filter(function (t) { return t.sku === p.sku; })

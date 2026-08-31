@@ -18,15 +18,15 @@ function fnAdminCatalog_(p) {
       moq: toNum_(r.moq), gst_rate: toNum_(r.gst_rate), lead_time: r.lead_time,
       on_hand: toNum_(r.on_hand), reserved: toNum_(r.reserved),
       safety_stock: toNum_(r.safety_stock), reorder_point: toNum_(r.reorder_point),
-      atp: atp_(r), visible: String(r.visible) === 'TRUE',
-      show_price: String(r.show_price) === 'TRUE',
+      atp: atp_(r), visible: isTrue_(r.visible),
+      show_price: isTrue_(r.show_price),
       tiers: (tiers[r.sku] || []).sort(function (a, b) { return a.min - b.min; })
     };
   });
   var brands = readRows_('Brands').map(function (b) {
     return {
       id: b.brand_id, name: b.name, logo: b.logo_url, desc: b.description,
-      active: String(b.active) === 'TRUE', sort: toNum_(b.sort)
+      active: isTrue_(b.active), sort: toNum_(b.sort)
     };
   });
   return ok_({ products: products, brands: brands });
@@ -148,7 +148,7 @@ function fnAdminUsers_(p) {
     users: readRows_('Users').map(function (u) {
       return {
         email: u.email, name: u.name, company: u.company,
-        active: String(u.active) === 'TRUE',
+        active: isTrue_(u.active),
         created: String(u.created), last_login: String(u.last_login || '')
       };
     })

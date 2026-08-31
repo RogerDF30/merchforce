@@ -11,7 +11,7 @@ function fnLogin_(p) {
   var rowNum = findRow_('Users', function (r) { return String(r.email).toLowerCase() === email; });
   if (rowNum < 0) return err_('Invalid credentials');
   var u = readRows_('Users')[rowNum - 2];
-  if (String(u.active) !== 'TRUE') return err_('Account disabled');
+  if (!isTrue_(u.active)) return err_('Account disabled');
   if (hashPassword_(String(p.password || ''), u.salt) !== u.pass_hash) {
     audit_(email, 'login_fail', '', '');
     return err_('Invalid credentials');

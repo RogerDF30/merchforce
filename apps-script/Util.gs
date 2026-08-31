@@ -89,3 +89,6 @@ function nextRequestId_() {
     lock.releaseLock();
   }
 }
+
+/** Sheets coerces the string 'TRUE' to boolean true on write — accept both. */
+function isTrue_(v) { return String(v).toUpperCase() === 'TRUE'; }
