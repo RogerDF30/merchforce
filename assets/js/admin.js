@@ -651,8 +651,8 @@ function renderBrands() {
     var tr = document.createElement('tr');
     tr.className = 'click';
     tr.innerHTML =
-      '<td>' + (b.logo ? '<img src="' + esc(b.logo) + '" style="width:36px;height:36px;border-radius:999px;object-fit:cover">' :
-        '<span style="width:36px;height:36px;border-radius:999px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:800">' + esc(b.name.charAt(0)) + '</span>') + '</td>' +
+      '<td>' + (b.logo ? '<span class="brand-thumb"><img src="' + esc(b.logo) + '" alt=""></span>' :
+        '<span class="brand-thumb empty">' + esc(b.name.charAt(0)) + '</span>') + '</td>' +
       '<td><b>' + esc(b.name) + '</b><br><small style="color:var(--ink-3)">' + esc(b.desc || '') + '</small></td>' +
       '<td class="num">' + count + '</td><td>' + (b.active ? '✓' : '—') + '</td><td class="num">' + b.sort + '</td>';
     tr.onclick = function () { editBrand(b); };
@@ -668,8 +668,17 @@ function editBrand(b) {
     '<div class="field"><label>Name *</label><input id="bName" value="' + esc(b.name) + '"></div>' +
     '<div class="field"><label>Description</label><input id="bDesc" value="' + esc(b.desc) + '"></div>' +
     '<div class="field"><label>Logo</label>' +
-      '<div id="bLogoPrev" style="margin-bottom:8px">' + (b.logo ? '<img src="' + esc(b.logo) + '" style="height:56px;max-width:160px;object-fit:contain">' : '') + '</div>' +
-      '<input id="bFile" type="file" accept="image/*"></div>' +
+      '<div class="logo-picker">' +
+        '<div id="bLogoPrev" class="logo-prev"></div>' +
+        '<div class="logo-picker-side">' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+            '<button type="button" class="btn small" id="bPick">Choose image</button>' +
+            '<button type="button" class="btn small" id="bClear" hidden>Remove</button>' +
+          '</div>' +
+          '<div id="bLogoName" class="note logo-name"></div>' +
+        '</div>' +
+      '</div>' +
+      '<input id="bFile" type="file" accept="image/*" hidden></div>' +
     '<div class="f2">' +
       '<div class="field"><label>Sort order</label><input id="bSort" type="number" value="' + b.sort + '"></div>' +
       '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px;margin-top:20px"><input id="bActive" type="checkbox"' + (b.active ? ' checked' : '') + '> Active</label>' +
@@ -679,7 +688,30 @@ function editBrand(b) {
       (isNew ? '' : '<button class="btn danger" id="bDel">Delete</button>') +
       '<button class="btn primary" id="bSave" style="flex:1;justify-content:center">Save brand</button>' +
     '</div>');
-  var logo = b.logo, uploading = false;
+  var logo = b.logo, logoName = b.logo ? 'Saved logo' : '', uploading = false;
+
+  // The picker always states what the brand is carrying right now: the live
+  // image, or an explicit empty state — never a bare "no file chosen".
+  function paintLogo() {
+    $('bLogoPrev').innerHTML = logo
+      ? '<img src="' + esc(logo) + '" alt="">'
+      : '<span class="logo-none">No logo</span>';
+    $('bLogoPrev').className = 'logo-prev' + (logo ? '' : ' empty');
+    $('bPick').textContent = logo ? 'Replace image' : 'Choose image';
+    $('bClear').hidden = !logo;
+    $('bLogoName').textContent = logo
+      ? logoName
+      : 'No logo set — the chip falls back to the brand name. PNG or SVG on a transparent background works best.';
+  }
+  paintLogo();
+
+  $('bPick').onclick = function () { $('bFile').click(); };
+  $('bClear').onclick = function () {
+    logo = ''; logoName = '';
+    paintLogo();
+    $('mErr').textContent = 'Logo removed — press Save brand to apply it.';
+  };
+
   $('bFile').onchange = function () {
     var f = this.files[0];
     if (!f) return;
@@ -689,18 +721,21 @@ function editBrand(b) {
       // when Save is pressed, so block Save until we actually hold that URL.
       uploading = true;
       $('bSave').disabled = true;
-      $('mErr').textContent = 'Uploading logo…';
+      $('bLogoName').textContent = 'Uploading ' + f.name + '…';
+      $('mErr').textContent = '';
       api('adminImageUpload', { data: rd.result, filename: 'brand-' + f.name, mime: f.type })
         .then(function (res) {
           logo = res.url;
+          logoName = f.name;
           uploading = false;
           $('bSave').disabled = false;
-          $('bLogoPrev').innerHTML = '<img src="' + esc(logo) + '" style="height:56px;max-width:160px;object-fit:contain">';
+          paintLogo();
           $('mErr').textContent = 'Logo uploaded — press Save brand to keep it.';
         })
         .catch(function (e) {
           uploading = false;
           $('bSave').disabled = false;
+          paintLogo();
           $('mErr').textContent = e.message;
         });
     };
