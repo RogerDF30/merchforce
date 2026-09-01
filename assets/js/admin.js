@@ -8,6 +8,10 @@ var CONFIG = {
     ? 'mf-demo-token' : 'mf_jgLqzLNJjzqVZ7qXfQ3JgvYXXxJj'
 };
 
+// Bumped with every frontend cache-buster. Shown on the lock screen so a
+// stale bundle is visible at a glance instead of being mistaken for a bug.
+var BUILD = 'v17';
+
 var A = {
   key: '', settings: null,
   requests: [], products: [], brands: [], users: [], analytics: null,
@@ -90,6 +94,7 @@ function unlock() {
   });
 }
 $('unlockBtn').onclick = unlock;
+if ($('buildTag')) $('buildTag').textContent = BUILD;
 $('adminKey').addEventListener('keydown', function (e) { if (e.key === 'Enter') unlock(); });
 $('lockNow').onclick = function () { location.reload(); };
 
