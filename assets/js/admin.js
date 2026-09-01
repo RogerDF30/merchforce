@@ -742,6 +742,15 @@ function mapFieldsOf(m) {
   if (m.stock_col) return [{ col: m.stock_col, field: 'on_hand' }];
   return [];
 }
+/* A mapping can draw fields from several tabs of one workbook. */
+function mapSourcesOf(m) {
+  if (m.sources && m.sources.length) {
+    return m.sources.filter(function (s) { return s.sku_col && (s.fields || []).length; });
+  }
+  var f = mapFieldsOf(m);
+  if (!f.length || !m.sku_col) return [];
+  return [{ tab: m.tab || '', sku_col: m.sku_col, fields: f }];
+}
 
 function renderSyncCard(s) {
   var maps = [];
@@ -754,22 +763,26 @@ function renderSyncCard(s) {
         (last.created ? ', ' + last.created + ' created' : '') +
         (last.unknown ? ', ' + last.unknown + ' unknown' : '') +
         (last.off_brand ? ', ' + last.off_brand + ' off-brand' : '');
-    var fieldsTxt = mapFieldsOf(m).map(function (f) {
-      return esc(f.col) + ' → ' + esc(syncFieldLabel(f.field));
+    var srcs = mapSourcesOf(m);
+    var fieldsTxt = srcs.map(function (src) {
+      return '<b>' + esc(src.tab || 'first tab') + '</b> · ' + esc(src.sku_col) + ' → SKU<br>' +
+        src.fields.map(function (f) {
+          return '&nbsp;&nbsp;' + esc(f.col) + ' → ' + esc(syncFieldLabel(f.field));
+        }).join('<br>');
     }).join('<br>');
     var push = m.mode === 'push';
-    var mapped = mapFieldsOf(m).length;
+    var mapped = srcs.length;
     return '<tr><td><b>' + esc(m.brand ? brandNameSafe(m.brand) : 'All brands') + '</b>' +
       '<br><span class="pill" style="font-size:10.5px;' + (push
         ? 'background:#f1e8ff;color:#7a3cf0">sheet pushes to us'
         : 'background:var(--accent-soft);color:var(--accent)">we read the sheet') + '</span>' +
       (m.create_new ? ' <span class="pill" style="background:var(--ok-soft);color:var(--ok);font-size:10.5px">auto-creates new</span>' : '') + '</td>' +
       '<td style="font-size:12px;color:var(--ink-3)">' +
-        (push ? (m.tab ? esc(m.tab) : 'first tab') + '<br>(private to supplier)'
-              : '…' + esc(String(m.sheet).slice(-8)) + (m.tab ? ' · ' + esc(m.tab) : '')) + '</td>' +
+        (push ? (mapped ? srcs.length + ' tab' + (srcs.length === 1 ? '' : 's') : 'sheet') + '<br>(private to supplier)'
+              : '…' + esc(String(m.sheet).slice(-8))) + '</td>' +
       '<td style="font-size:12.5px">' + (mapped
-        ? esc(m.sku_col) + ' → SKU<br>' + fieldsTxt
-        : '<span style="color:var(--warn);font-weight:700">' + (m.headers ? 'columns received — map them' : 'awaiting first push') + '</span>') + '</td>' +
+        ? fieldsTxt
+        : '<span style="color:var(--warn);font-weight:700">' + ((m.tabs_meta || m.headers) ? 'columns received — map them' : 'awaiting first push') + '</span>') + '</td>' +
       '<td style="font-size:12.5px">' + lastTxt + '</td>' +
       '<td style="white-space:nowrap">' +
       (push ? '<button class="btn small" data-conn="' + i + '">Connector</button> '
@@ -890,17 +903,19 @@ function wireSyncCard() {
   }
 }
 
-/* Add/edit one brand→sheet mapping. Two modes:
-   pull — Merchforce reads the sheet (supplier shares it, Viewer);
-   push — the supplier's sheet sends us the mapped columns (nothing shared). */
+/* Add/edit one brand→sheet mapping.
+   Modes: pull (Merchforce reads the sheet) | push (the sheet sends to us).
+   A mapping may draw fields from several TABS of the same workbook, each with
+   its own SKU column — stock from one tab, prices and names from another. */
 function openMapEditor(m, index) {
   var isNew = !m;
-  m = m || { mode: 'pull', brand: '', sheet: '', tab: '', sku_col: '', fields: [], create_new: false };
+  m = m || { mode: 'pull', brand: '', sheet: '', tab: '', sku_col: '', fields: [], sources: [], create_new: false };
   var mode = m.mode === 'push' ? 'push' : 'pull';
-  var draft = { fields: mapFieldsOf(m).slice() };
-  if (!draft.fields.length) draft.fields = [{ col: '', field: 'on_hand' }];
-  var headers = m.headers || null;          // discovered by a push, or by Load sheet
-  var sample = m.sample || null;
+  var draft = { sources: JSON.parse(JSON.stringify(mapSourcesOf(m))) };
+  if (!draft.sources.length) draft.sources = [{ tab: m.tab || '', sku_col: '', fields: [{ col: '', field: 'on_hand' }] }];
+  // What we know about the workbook: pull → after Load sheet; push → after the
+  // supplier's first push. Either way: [{name, headers, sample, rows}].
+  var tabsMeta = m.tabs_meta || (m.headers ? [{ name: m.tab || '', headers: m.headers, sample: m.sample || [], rows: 0 }] : null);
 
   openDrawer(
     '<h2 style="margin:0 0 4px">' + (isNew ? 'Link a brand sheet' : 'Edit mapping') + '</h2>' +
@@ -916,75 +931,163 @@ function openMapEditor(m, index) {
       }).join('') + '</select></div>' +
     '<div id="zPullBox">' +
       '<div class="field"><label>Sheet link or ID *</label><input id="zSheet" value="' + esc(m.sheet) + '" placeholder="https://docs.google.com/spreadsheets/d/…"></div>' +
+      '<button class="btn small" id="zLoad">Load sheet</button> ' +
+      '<span id="zStatus" style="font-size:13px;color:var(--ink-3)"></span>' +
     '</div>' +
-    '<div class="field"><label>Tab (blank = first tab)</label><input id="zTab" value="' + esc(m.tab) + '"></div>' +
-    '<div id="zLoadBox"><button class="btn small" id="zLoad">Load sheet</button> ' +
-      '<span id="zStatus" style="font-size:13px;color:var(--ink-3)"></span></div>' +
-    '<div id="zMap" style="margin-top:14px"></div>' +
-    '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-top:12px">' +
+    '<div id="zMap" style="margin-top:16px"></div>' +
+    '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13.5px;margin-top:14px">' +
       '<input type="checkbox" id="zCreate"' + (m.create_new ? ' checked' : '') + '> Auto-create products for new SKUs in this sheet' +
     '</label>' +
     '<p class="note" style="margin:4px 0 0">New products are created hidden (not on the storefront) under this mapping\'s brand, so you can review and publish them from the Catalog tab. Needs a specific brand selected.</p>' +
     '<div class="form-err" id="mErr"></div>' +
     '<button class="btn primary" id="zSave" style="width:100%;justify-content:center;margin-top:10px">Save mapping</button>');
 
-  function colSelect(id, val) {
-    if (!headers) return '<input data-zc="' + id + '" value="' + esc(val || '') + '" placeholder="Column header" style="padding:7px 9px;border:1px solid var(--line);border-radius:8px;width:200px">';
-    return '<select data-zc="' + id + '" style="padding:7px 9px;border:1px solid var(--line);border-radius:8px;max-width:220px"><option value="">—</option>' +
-      headers.map(function (h) { return '<option' + (h === val ? ' selected' : '') + '>' + esc(h) + '</option>'; }).join('') + '</select>';
+  function tabNames() { return (tabsMeta || []).map(function (t) { return t.name; }); }
+  function headersFor(tab) {
+    if (!tabsMeta) return null;
+    var hit = tabsMeta.filter(function (t) { return t.name === tab; })[0] || (tab ? null : tabsMeta[0]);
+    return hit ? hit.headers : null;
   }
+  function sampleFor(tab) {
+    if (!tabsMeta) return null;
+    var hit = tabsMeta.filter(function (t) { return t.name === tab; })[0] || (tab ? null : tabsMeta[0]);
+    return hit ? { headers: hit.headers, sample: hit.sample || [], rows: hit.rows } : null;
+  }
+  function colField(attr, tab, val) {
+    var hs = headersFor(tab);
+    if (!hs) return '<input ' + attr + ' value="' + esc(val || '') + '" placeholder="Column header" style="padding:7px 9px;border:1px solid var(--line);border-radius:8px;width:180px">';
+    return '<select ' + attr + ' style="padding:7px 9px;border:1px solid var(--line);border-radius:8px;max-width:200px"><option value="">—</option>' +
+      hs.map(function (h) { return '<option' + (h === val ? ' selected' : '') + '>' + esc(h) + '</option>'; }).join('') + '</select>';
+  }
+
   function paintMap() {
     var box = $('zMap');
-    var pushWaiting = ($('zMode').value === 'push' && !headers);
+    var waiting = ($('zMode').value === 'push' && !tabsMeta);
     var html = '';
-    if (pushWaiting) {
-      html += '<div class="note2">Save this mapping first, install the connector on the supplier\'s sheet, and its columns appear here automatically — then come back and map them. You can also type the column headers now if you already know them.</div>';
+    if (waiting) {
+      html += '<div class="note2">Save this mapping first and install the connector on the supplier\'s sheet — every tab and column it finds appears here automatically, then you map them. You can also type them now if you already know them.</div>';
     }
-    html += '<div class="field"><label>SKU column *</label>' + colSelect('sku', paintMap._sku !== undefined ? paintMap._sku : m.sku_col) + '</div>' +
-      '<label style="font-size:12.5px;font-weight:700;color:var(--ink-2)">Field mappings</label>';
-    draft.fields.forEach(function (f, i) {
-      html += '<div class="tier-row">' + colSelect('c' + i, f.col) +
-        ' → <select data-zf="' + i + '" style="padding:7px 9px;border:1px solid var(--line);border-radius:8px">' +
-        SYNC_FIELDS.map(function (x) {
-          return '<option value="' + x[0] + '"' + (x[0] === f.field ? ' selected' : '') + '>' + x[1] + '</option>';
-        }).join('') + '</select>' +
-        ' <button type="button" class="btn ghost small" data-zrm="' + i + '"' + (draft.fields.length === 1 ? ' disabled' : '') + '>✕</button></div>';
+    html += '<label style="font-size:12.5px;font-weight:700;color:var(--ink-2)">Where the data comes from</label>' +
+      '<p class="note" style="margin:2px 0 10px">One block per tab. Fields can come from different tabs of the same workbook — they are joined on each tab\'s SKU column.</p>';
+
+    draft.sources.forEach(function (src, si) {
+      var s = sampleFor(src.tab);
+      html += '<div class="panel2" style="padding:14px 16px;margin-bottom:10px">' +
+        '<div class="tier-row" style="margin-bottom:10px">' +
+          'Tab ' + (tabsMeta
+            ? '<select data-zt="' + si + '" style="padding:7px 9px;border:1px solid var(--line);border-radius:8px;max-width:200px">' +
+              tabNames().map(function (n) {
+                return '<option' + (n === src.tab ? ' selected' : '') + '>' + esc(n) + '</option>';
+              }).join('') + '</select>'
+            : '<input data-zt="' + si + '" value="' + esc(src.tab) + '" placeholder="Tab name (blank = first)" style="padding:7px 9px;border:1px solid var(--line);border-radius:8px;width:180px">') +
+          ' &nbsp;SKU column ' + colField('data-zs="' + si + '"', src.tab, src.sku_col) +
+          (draft.sources.length > 1
+            ? ' <button type="button" class="btn ghost small" data-zsrm="' + si + '" style="color:var(--bad);margin-left:auto">Remove tab</button>' : '') +
+        '</div>';
+      src.fields.forEach(function (f, fi) {
+        html += '<div class="tier-row">' + colField('data-zc="' + si + '.' + fi + '"', src.tab, f.col) +
+          ' → <select data-zf="' + si + '.' + fi + '" style="padding:7px 9px;border:1px solid var(--line);border-radius:8px">' +
+          SYNC_FIELDS.map(function (x) {
+            return '<option value="' + x[0] + '"' + (x[0] === f.field ? ' selected' : '') + '>' + x[1] + '</option>';
+          }).join('') + '</select>' +
+          ' <button type="button" class="btn ghost small" data-zrm="' + si + '.' + fi + '"' + (src.fields.length === 1 ? ' disabled' : '') + '>✕</button></div>';
+      });
+      html += '<button type="button" class="btn small" data-zadd="' + si + '">+ Map another field from this tab</button>';
+      if (s && s.sample.length) {
+        html += '<div class="tbl-wrap" style="max-height:130px;overflow:auto;margin-top:10px"><table class="tbl"><thead><tr>' +
+          s.headers.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+          s.sample.map(function (row) {
+            return '<tr>' + row.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>';
+          }).join('') + '</tbody></table></div>';
+      }
+      html += '</div>';
     });
-    html += '<button type="button" class="btn small" id="zAddField">+ Map another field</button>';
-    if (headers && sample) {
-      html += '<div class="tbl-wrap" style="max-height:150px;overflow:auto;margin-top:10px"><table class="tbl"><thead><tr>' +
-        headers.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
-        sample.map(function (row) {
-          return '<tr>' + row.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>';
-        }).join('') + '</tbody></table></div>';
-    }
+    html += '<button type="button" class="btn small" id="zAddTab">+ Add a tab</button>';
     box.innerHTML = html;
+
+    box.querySelectorAll('[data-zt]').forEach(function (elx) {
+      elx.onchange = function () {
+        var src = draft.sources[Number(elx.dataset.zt)];
+        src.tab = elx.value;
+        src.sku_col = '';
+        src.fields.forEach(function (f) { f.col = ''; });
+        guessSource(src);
+        paintMap();
+      };
+    });
+    box.querySelectorAll('[data-zs]').forEach(function (elx) {
+      elx.onchange = function () { draft.sources[Number(elx.dataset.zs)].sku_col = elx.value; };
+    });
     box.querySelectorAll('[data-zc]').forEach(function (elx) {
       elx.onchange = function () {
-        if (elx.dataset.zc === 'sku') paintMap._sku = elx.value;
-        else draft.fields[Number(elx.dataset.zc.slice(1))].col = elx.value;
+        var p = elx.dataset.zc.split('.');
+        draft.sources[Number(p[0])].fields[Number(p[1])].col = elx.value;
       };
     });
     box.querySelectorAll('select[data-zf]').forEach(function (elx) {
-      elx.onchange = function () { draft.fields[Number(elx.dataset.zf)].field = elx.value; };
+      elx.onchange = function () {
+        var p = elx.dataset.zf.split('.');
+        draft.sources[Number(p[0])].fields[Number(p[1])].field = elx.value;
+      };
     });
     box.querySelectorAll('button[data-zrm]').forEach(function (b) {
-      b.onclick = function () { draft.fields.splice(Number(b.dataset.zrm), 1); paintMap(); };
+      b.onclick = function () {
+        var p = b.dataset.zrm.split('.');
+        draft.sources[Number(p[0])].fields.splice(Number(p[1]), 1);
+        paintMap();
+      };
     });
-    $('zAddField').onclick = function () {
-      var used = draft.fields.map(function (f) { return f.field; });
-      var next = SYNC_FIELDS.filter(function (x) { return used.indexOf(x[0]) < 0; })[0];
-      draft.fields.push({ col: '', field: next ? next[0] : 'on_hand' });
+    box.querySelectorAll('button[data-zsrm]').forEach(function (b) {
+      b.onclick = function () { draft.sources.splice(Number(b.dataset.zsrm), 1); paintMap(); };
+    });
+    box.querySelectorAll('button[data-zadd]').forEach(function (b) {
+      b.onclick = function () {
+        var src = draft.sources[Number(b.dataset.zadd)];
+        var used = allUsedFields();
+        var next = SYNC_FIELDS.filter(function (x) { return used.indexOf(x[0]) < 0; })[0];
+        src.fields.push({ col: '', field: next ? next[0] : 'on_hand' });
+        paintMap();
+      };
+    });
+    $('zAddTab').onclick = function () {
+      var names = tabNames();
+      var used = draft.sources.map(function (s2) { return s2.tab; });
+      var free = names.filter(function (n) { return used.indexOf(n) < 0; })[0];
+      var usedF = allUsedFields();
+      var nextF = SYNC_FIELDS.filter(function (x) { return usedF.indexOf(x[0]) < 0; })[0];
+      var src = { tab: free !== undefined ? free : '', sku_col: '', fields: [{ col: '', field: nextF ? nextF[0] : 'on_hand' }] };
+      guessSource(src);
+      draft.sources.push(src);
       paintMap();
     };
   }
-  paintMap._sku = m.sku_col;
-  paintMap._sample = sample;
+
+  function allUsedFields() {
+    var out = [];
+    draft.sources.forEach(function (s2) { s2.fields.forEach(function (f) { out.push(f.field); }); });
+    return out;
+  }
+
+  var GUESS = { on_hand: ['stock', 'qty', 'quantity', 'on hand', 'available'],
+                price: ['selling', 'dp ', 'price'], mrp: ['mrp'], name: ['name', 'product'],
+                moq: ['moq'], gst_rate: ['gst'], lead_time: ['lead'], description: ['desc'],
+                category: ['category'], subcategory: ['subcat'] };
+  function guessSource(src) {
+    var hs = headersFor(src.tab);
+    if (!hs) return;
+    var pick = function (cur, words) {
+      if (cur) return cur;
+      return hs.filter(function (h) {
+        return words.some(function (w) { return h.toLowerCase().indexOf(w) >= 0; });
+      })[0] || '';
+    };
+    src.sku_col = pick(src.sku_col, ['sku', 'code', 'item']);
+    src.fields.forEach(function (f) { f.col = pick(f.col, GUESS[f.field] || []); });
+  }
 
   function paintMode() {
     var push = $('zMode').value === 'push';
     $('zPullBox').hidden = push;
-    $('zLoadBox').hidden = push;
     $('zModeNote').innerHTML = push
       ? 'For suppliers who will not share their file. A small connector runs on <b>their</b> sheet and sends only the columns you map here — Merchforce never opens the file. You get the connector script right after saving.'
       : 'Merchforce opens the sheet directly. The supplier shares it with the backend account (Viewer is enough).';
@@ -992,50 +1095,45 @@ function openMapEditor(m, index) {
     paintMap();
   }
   $('zMode').onchange = paintMode;
-  if (headers) guessColumns();
+  if (tabsMeta) draft.sources.forEach(guessSource);
   paintMode();
 
   $('zLoad').onclick = function () {
     $('zStatus').textContent = 'Opening sheet…';
-    api('adminSyncPreview', { sheet: $('zSheet').value.trim(), tab: $('zTab').value.trim() })
+    api('adminSyncPreview', { sheet: $('zSheet').value.trim(), tab: '' })
       .then(function (res) {
-        headers = res.headers;
-        sample = res.sample;
-        $('zStatus').textContent = res.rows + ' rows · tab "' + res.tab + '"' +
-          (res.tabs.length > 1 ? ' · tabs: ' + res.tabs.join(', ') : '');
-        guessColumns();
+        tabsMeta = (res.all_tabs && res.all_tabs.length)
+          ? res.all_tabs
+          : [{ name: res.tab, headers: res.headers, sample: res.sample, rows: res.rows }];
+        $('zStatus').textContent = tabsMeta.length + ' tab' + (tabsMeta.length === 1 ? '' : 's') + ': ' +
+          tabsMeta.map(function (t) { return t.name + ' (' + t.rows + ')'; }).join(', ');
+        draft.sources.forEach(function (src) {
+          if (!src.tab && tabsMeta.length) src.tab = tabsMeta[0].name;
+          guessSource(src);
+        });
         paintMap();
       })
       .catch(function (e) { $('zStatus').innerHTML = '<span style="color:var(--bad)">' + esc(e.message) + '</span>'; });
   };
 
-  function guessColumns() {
-    var guess = function (cur, words) {
-      if (cur) return cur;
-      return headers.filter(function (h) {
-        return words.some(function (w) { return h.toLowerCase().indexOf(w) >= 0; });
-      })[0] || '';
-    };
-    paintMap._sku = guess(paintMap._sku, ['sku', 'code', 'item']);
-    var GUESS = { on_hand: ['stock', 'qty', 'quantity', 'on hand', 'available'],
-                  price: ['selling', 'price', 'dp '], mrp: ['mrp'], name: ['name', 'product'],
-                  moq: ['moq'], gst_rate: ['gst'], lead_time: ['lead'], description: ['desc'],
-                  category: ['category'], subcategory: ['subcat'] };
-    draft.fields.forEach(function (f) { f.col = guess(f.col, GUESS[f.field] || []); });
-  }
-
   $('zSave').onclick = function () {
     var push = $('zMode').value === 'push';
-    var fields = draft.fields.filter(function (f) { return f.col; });
-    if (!push && (!paintMap._sku || !fields.length)) {
-      $('mErr').textContent = 'Pick the SKU column and at least one field mapping.'; return;
+    var sources = draft.sources.map(function (s2) {
+      return { tab: s2.tab || '', sku_col: s2.sku_col || '',
+               fields: (s2.fields || []).filter(function (f) { return f.col; }) };
+    }).filter(function (s2) { return s2.sku_col && s2.fields.length; });
+    if (!push && !sources.length) {
+      $('mErr').textContent = 'Each tab needs its SKU column and at least one field mapping.'; return;
     }
     if (push && !$('zBrand').value) { $('mErr').textContent = 'A push mapping must be bound to one brand.'; return; }
     if ($('zCreate').checked && !$('zBrand').value) { $('mErr').textContent = 'Auto-create needs a specific brand selected.'; return; }
     $('zSave').disabled = true;
     var payload = { map: { mode: push ? 'push' : 'pull', brand: $('zBrand').value,
-                           sheet: push ? '' : $('zSheet').value.trim(), tab: $('zTab').value.trim(),
-                           sku_col: paintMap._sku || '', fields: fields, create_new: $('zCreate').checked } };
+                           sheet: push ? '' : $('zSheet').value.trim(),
+                           tab: sources[0] ? sources[0].tab : '',
+                           sku_col: sources[0] ? sources[0].sku_col : '',
+                           fields: sources[0] ? sources[0].fields : [],
+                           sources: sources, create_new: $('zCreate').checked } };
     if (index !== null && index !== undefined) payload.index = index;
     api('adminSyncMapSave', payload).then(function (res) {
       var idx = (index !== null && index !== undefined) ? index : res.maps.length - 1;
@@ -1047,8 +1145,8 @@ function openMapEditor(m, index) {
         return null;
       }
       return api('adminSyncRun', { index: idx }).then(function (r2) {
-        var s = r2.results[0].summary;
-        toast(s.error ? s.error : 'Synced: ' + s.updated + ' updated, ' + s.created + ' created, ' + s.unknown + ' unknown');
+        var s2 = r2.results[0].summary;
+        toast(s2.error ? s2.error : 'Synced: ' + s2.updated + ' updated, ' + s2.created + ' created, ' + s2.unknown + ' unknown');
         closeDrawer();
         return refreshSettings_();
       });
@@ -1063,7 +1161,7 @@ function openPushConnector(m) {
 "var MERCHFORCE_URL = '" + CONFIG.API_URL + "';\n" +
 "var MERCHFORCE_TOKEN = '" + CONFIG.API_TOKEN + "';\n" +
 "var PUSH_KEY = '" + (m.push_key || '') + "';\n" +
-"var TAB = '" + (m.tab || '') + "';   // blank = first tab\n" +
+"var TABS = [];   // empty = every tab in this sheet; or e.g. ['Stock','Price List']\n" +
 "\n" +
 "function install() {\n" +
 "  ScriptApp.getProjectTriggers().forEach(function (t) {\n" +
@@ -1086,15 +1184,20 @@ function openPushConnector(m) {
 "function merchforceHourly() { merchforceSend(); }\n" +
 "\n" +
 "function merchforceSend() {\n" +
-"  var ss = SpreadsheetApp.getActive();\n" +
-"  var sh = TAB ? ss.getSheetByName(TAB) : ss.getSheets()[0];\n" +
-"  if (!sh || sh.getLastRow() < 1) return;\n" +
-"  var values = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();\n" +
-"  var headers = values.shift();\n" +
+"  var tabs = [];\n" +
+"  SpreadsheetApp.getActive().getSheets().forEach(function (sh) {\n" +
+"    if (TABS.length && TABS.indexOf(sh.getName()) < 0) return;\n" +
+"    var lr = sh.getLastRow(), lc = sh.getLastColumn();\n" +
+"    if (lr < 1 || lc < 1) return;\n" +
+"    var values = sh.getRange(1, 1, Math.min(lr, 2001), lc).getValues();\n" +
+"    var headers = values.shift();\n" +
+"    tabs.push({ name: sh.getName(), headers: headers, rows: values });\n" +
+"  });\n" +
+"  if (!tabs.length) return;\n" +
 "  var res = UrlFetchApp.fetch(MERCHFORCE_URL, {\n" +
 "    method: 'post', contentType: 'text/plain', muteHttpExceptions: true,\n" +
 "    payload: JSON.stringify({ action: 'syncPush', token: MERCHFORCE_TOKEN,\n" +
-"                              push_key: PUSH_KEY, headers: headers, rows: values })\n" +
+"                              push_key: PUSH_KEY, tabs: tabs })\n" +
 "  });\n" +
 "  Logger.log(res.getContentText());\n" +
 "}";
@@ -1105,7 +1208,7 @@ function openPushConnector(m) {
       '<li>The supplier opens their sheet → <b>Extensions → Apps Script</b>.</li>' +
       '<li>They replace whatever is in the editor with the script below.</li>' +
       '<li>Save, choose the <b>install</b> function, click <b>Run</b>, approve the authorization (it is their own script, on their own file).</li>' +
-      '<li>The first run sends the column names here — then map them in this console.</li>' +
+      '<li>The first run sends every tab\'s column names here — then map them in this console (fields may come from different tabs).</li>' +
     '</ol>' +
     '<p class="note">After that it sends on every edit (max once per 30 seconds) plus hourly as a safety net. The push key below identifies this mapping — treat it like a password.</p>' +
     '<textarea id="lsCode" readonly style="width:100%;height:300px;font-family:ui-monospace,monospace;font-size:12px;border:1px solid var(--line);border-radius:10px;padding:12px;white-space:pre"></textarea>' +

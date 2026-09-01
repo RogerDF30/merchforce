@@ -33,6 +33,25 @@ function mapFields_(map) {
   return [];
 }
 
+/**
+ * A mapping may draw each field from a DIFFERENT TAB of the same workbook —
+ * stock in one tab, prices and names in another — joined on each tab's own SKU
+ * column. Sources: [{tab, sku_col, fields:[{col, field}]}]. Single-tab maps
+ * (the old shape) are migrated on read, so nothing existing breaks.
+ */
+function mapSources_(map) {
+  if (map.sources && map.sources.length) {
+    return map.sources.filter(function (src) {
+      return src.sku_col && (src.fields || []).length;
+    });
+  }
+  var f = mapFields_(map);
+  if (!f.length || !map.sku_col) return [];
+  return [{ tab: map.tab || '', sku_col: map.sku_col, fields: f }];
+}
+
+function tabKey_(t) { return String(t === undefined || t === null ? '' : t).trim() || '__first__'; }
+
 function sheetIdFrom_(v) {
   var m = String(v || '').match(/\/d\/([A-Za-z0-9_-]{20,})/);
   return m ? m[1] : String(v || '').trim();
@@ -67,9 +86,22 @@ function fnAdminSyncPreview_(p) {
   if (lastRow < 2 || lastCol < 1) return err_('That tab looks empty');
   var headers = o.sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
   var sample = o.sh.getRange(2, 1, Math.min(5, lastRow - 1), lastCol).getDisplayValues();
+  // Every tab's columns in one call, so the admin can map across tabs
+  // (stock in one, prices in another) without loading them one by one.
+  var allTabs = o.ss.getSheets().slice(0, 30).map(function (t) {
+    var lc = Math.min(t.getLastColumn(), 30), lr = t.getLastRow();
+    if (lr < 1 || lc < 1) return { name: t.getName(), headers: [], sample: [], rows: 0 };
+    return {
+      name: t.getName(),
+      headers: t.getRange(1, 1, 1, lc).getValues()[0].map(String),
+      sample: lr > 1 ? t.getRange(2, 1, Math.min(3, lr - 1), lc).getDisplayValues() : [],
+      rows: lr - 1
+    };
+  });
   return ok_({
     sheet_id: id,
     tabs: o.ss.getSheets().map(function (s) { return s.getName(); }),
+    all_tabs: allTabs,
     tab: o.sh.getName(),
     headers: headers,
     sample: sample,
@@ -84,18 +116,33 @@ function fnAdminSyncMapSave_(p) {
   var mode = m.mode === 'push' ? 'push' : 'pull';
   m.sheet = sheetIdFrom_(m.sheet);
   var fields = (m.fields || []).filter(function (f) { return f.col && SYNC_FIELDS[f.field]; });
-  if (mode === 'pull' && (!m.sheet || !m.sku_col || !fields.length)) {
+  // Sources = one entry per tab used: {tab, sku_col, fields:[{col, field}]}.
+  var sources = (m.sources || []).map(function (src) {
+    return {
+      tab: src.tab || '',
+      sku_col: src.sku_col || '',
+      fields: (src.fields || []).filter(function (f) { return f.col && SYNC_FIELDS[f.field]; })
+    };
+  }).filter(function (src) { return src.sku_col && src.fields.length; });
+  if (!sources.length && fields.length && m.sku_col) {
+    sources = [{ tab: m.tab || '', sku_col: m.sku_col, fields: fields }];
+  }
+  if (mode === 'pull' && (!m.sheet || !sources.length)) {
     return err_('Sheet, SKU column and at least one field mapping are required');
+  }
+  // A field may only be fed by one tab, or two tabs would fight over it.
+  var claimed = {};
+  for (var si = 0; si < sources.length; si++) {
+    for (var fi = 0; fi < sources[si].fields.length; fi++) {
+      var fname = sources[si].fields[fi].field;
+      if (claimed[fname]) return err_('Field "' + SYNC_FIELDS[fname].label + '" is mapped from more than one tab');
+      claimed[fname] = 1;
+    }
   }
   // A push mapping may be saved before the supplier's first push, when the
   // columns are not known yet — the connector discovers them for us.
   if (mode === 'push' && !m.brand) {
     return err_('A push mapping must be bound to one brand');
-  }
-  var seen = {};
-  for (var i = 0; i < fields.length; i++) {
-    if (seen[fields[i].field]) return err_('Field "' + SYNC_FIELDS[fields[i].field].label + '" is mapped twice');
-    seen[fields[i].field] = 1;
   }
   if (m.create_new && !m.brand) {
     return err_('To auto-create new products, the mapping must be bound to one brand');
@@ -103,13 +150,15 @@ function fnAdminSyncMapSave_(p) {
   var maps = getSyncMaps_();
   var idx = toNum_(p.index);
   var rec = { mode: mode, brand: m.brand || '', sheet: m.sheet, tab: m.tab || '',
-              sku_col: m.sku_col || '', fields: fields, create_new: !!m.create_new,
-              push_key: '', headers: null, sample: null, last: null };
+              sku_col: m.sku_col || '', fields: fields, sources: sources,
+              create_new: !!m.create_new,
+              push_key: '', headers: null, sample: null, tabs_meta: null, last: null };
   if (p.index !== undefined && maps[idx]) {
     rec.last = maps[idx].last;
     rec.push_key = maps[idx].push_key || '';
     rec.headers = maps[idx].headers || null;
     rec.sample = maps[idx].sample || null;
+    rec.tabs_meta = maps[idx].tabs_meta || null;
     maps[idx] = rec;
   } else {
     maps.push(rec);
@@ -157,58 +206,79 @@ function runStockSync_(map, actor) {
     s.error = 'Push mapping — the supplier\'s sheet sends the data; nothing to pull here';
     return s;
   }
-  var headers, data;
+  var tabData = {};
   try {
-    var o = openSupplierSheet_(map.sheet, map.tab || '');
-    var lastCol = o.sh.getLastColumn();
-    var lastRow = o.sh.getLastRow();
-    headers = o.sh.getRange(1, 1, 1, lastCol).getValues()[0];
-    data = lastRow > 1 ? o.sh.getRange(2, 1, lastRow - 1, lastCol).getValues() : [];
+    var sources = mapSources_(map);
+    if (!sources.length) throw new Error('No field mappings — edit the mapping');
+    var seen = {};
+    sources.forEach(function (src) {
+      var key = tabKey_(src.tab);
+      if (seen[key]) return;           // one read per tab, however many fields use it
+      seen[key] = 1;
+      var o = openSupplierSheet_(map.sheet, src.tab || '');
+      var lastCol = o.sh.getLastColumn();
+      var lastRow = o.sh.getLastRow();
+      tabData[key] = {
+        headers: lastCol ? o.sh.getRange(1, 1, 1, lastCol).getValues()[0] : [],
+        rows: lastRow > 1 ? o.sh.getRange(2, 1, lastRow - 1, lastCol).getValues() : []
+      };
+    });
   } catch (e) {
     var f = emptySummary_();
     f.error = e.message || String(e);
     audit_(actor || 'sync', 'sheet_sync', (map.brand || 'all') + ':' + map.sheet, f.error);
     return f;
   }
-  return applySyncRows_(map, headers, data, actor);
+  return applySyncData_(map, tabData, actor);
 }
 
 /**
  * Shared engine: apply sheet rows to the catalog. Used by pull mode and by
  * PUSH mode, where the connector on the supplier's own sheet POSTs the rows
  * and Merchforce never touches (or needs access to) their file.
+ *
+ * tabData: { <tab name or __first__>: {headers, rows} }. Every source is read
+ * with its own SKU column and merged on the SKU, so a product can take its
+ * stock from one tab and its price and name from another.
  */
-function applySyncRows_(map, rawHeaders, data, actor) {
+function applySyncData_(map, tabData, actor) {
   var summary = emptySummary_();
   try {
-    var fields = mapFields_(map);
-    if (!fields.length) throw new Error('No field mappings — edit the mapping');
-    var headers = (rawHeaders || []).map(function (h) { return String(h).trim(); });
-    data = data || [];
-    var iSku = headers.indexOf(String(map.sku_col).trim());
-    if (iSku < 0) throw new Error('SKU column not found — re-map the columns');
-    var fIdx = fields.map(function (f) {
-      var i = headers.indexOf(String(f.col).trim());
-      if (i < 0) throw new Error('Column "' + f.col + '" not found — re-map the columns');
-      return { i: i, field: f.field, numeric: !!SYNC_FIELDS[f.field].numeric };
-    });
+    var sources = mapSources_(map);
+    if (!sources.length) throw new Error('No field mappings — edit the mapping');
+    var firstKey = Object.keys(tabData)[0];
 
-    var incoming = {}; // skuKey -> {sku, values:{field: value}} (last row wins)
-    data.forEach(function (row) {
-      var rawSku = String(row[iSku]).trim();
-      if (!rawSku) return;
-      var values = {};
-      fIdx.forEach(function (f) {
-        var v = row[f.i];
-        if (f.numeric) {
-          var n = Number(v);
-          values[f.field] = isNaN(n) ? null : Math.max(0, f.field === 'gst_rate' ? n : Math.floor(n * 100) / 100);
-          if (f.field === 'on_hand' || f.field === 'moq') values[f.field] = values[f.field] === null ? null : Math.floor(values[f.field]);
-        } else {
-          values[f.field] = String(v === undefined || v === null ? '' : v).trim();
-        }
+    var incoming = {}; // skuKey -> {sku, values:{field: value}} merged across tabs
+    sources.forEach(function (src) {
+      var label = src.tab || 'first tab';
+      var d = tabData[tabKey_(src.tab)] || (tabKey_(src.tab) === '__first__' ? tabData[firstKey] : null);
+      if (!d) throw new Error('No data for tab "' + label + '"');
+      var headers = (d.headers || []).map(function (h) { return String(h).trim(); });
+      var iSku = headers.indexOf(String(src.sku_col).trim());
+      if (iSku < 0) throw new Error('SKU column "' + src.sku_col + '" not found in tab "' + label + '"');
+      var fIdx = (src.fields || []).map(function (f) {
+        var i = headers.indexOf(String(f.col).trim());
+        if (i < 0) throw new Error('Column "' + f.col + '" not found in tab "' + label + '"');
+        return { i: i, field: f.field, numeric: !!SYNC_FIELDS[f.field].numeric };
       });
-      incoming[skuKey_(rawSku)] = { sku: rawSku, values: values };
+      (d.rows || []).forEach(function (row) {
+        var rawSku = String(row[iSku]).trim();
+        if (!rawSku) return;
+        var k = skuKey_(rawSku);
+        var rec = incoming[k];
+        if (!rec) { rec = { sku: rawSku, values: {} }; incoming[k] = rec; }
+        fIdx.forEach(function (f) {
+          var v = row[f.i];
+          if (f.numeric) {
+            var n = Number(v);
+            var num = isNaN(n) ? null : Math.max(0, f.field === 'gst_rate' ? n : Math.floor(n * 100) / 100);
+            if ((f.field === 'on_hand' || f.field === 'moq') && num !== null) num = Math.floor(num);
+            rec.values[f.field] = num;
+          } else {
+            rec.values[f.field] = String(v === undefined || v === null ? '' : v).trim();
+          }
+        });
+      });
     });
 
     var lock = LockService.getScriptLock();
@@ -378,27 +448,49 @@ function fnSyncPush_(p) {
   maps.forEach(function (m, i) { if (m.push_key && m.push_key === key) idx = i; });
   if (idx < 0) return err_('Unknown push key — re-copy the connector from the admin console');
 
-  var headers = (p.headers || []).map(function (h) { return String(h).trim(); });
-  if (!headers.length) return err_('No headers received (is row 1 of that tab empty?)');
-  var rows = (p.rows || []).slice(0, 5000);
-
-  // Remember what the sheet looks like so the mapping UI can offer its columns.
-  maps[idx].headers = headers.slice(0, 30);
-  maps[idx].sample = rows.slice(0, 3).map(function (r) {
-    return r.slice(0, 30).map(function (c) { return String(c === null || c === undefined ? '' : c).slice(0, 40); });
+  // The connector sends every tab it is allowed to read ({name, headers, rows}).
+  // Older connectors send a single {headers, rows} — still accepted.
+  var tabs = p.tabs;
+  if (!tabs || !tabs.length) {
+    if (!(p.headers || []).length) return err_('No tabs received (is row 1 of that sheet empty?)');
+    tabs = [{ name: '', headers: p.headers, rows: p.rows || [] }];
+  }
+  var tabData = {}, meta = [];
+  tabs.slice(0, 30).forEach(function (t, i) {
+    var headers = (t.headers || []).map(function (h) { return String(h).trim(); });
+    var rows = (t.rows || []).slice(0, 5000);
+    var key2 = tabKey_(t.name);
+    tabData[key2] = { headers: headers, rows: rows };
+    if (i === 0) tabData['__first__'] = tabData[key2];
+    meta.push({
+      name: String(t.name || ''),
+      headers: headers.slice(0, 30),
+      rows: rows.length,
+      sample: rows.slice(0, 3).map(function (r) {
+        return r.slice(0, 30).map(function (c) { return String(c === null || c === undefined ? '' : c).slice(0, 40); });
+      })
+    });
   });
 
+  // Remember the shape of their workbook so the mapping UI can offer every
+  // tab and column — the admin never opens (or can open) the file itself.
+  maps[idx].tabs_meta = meta;
+  maps[idx].headers = meta[0] ? meta[0].headers : null;
+  maps[idx].sample = meta[0] ? meta[0].sample : null;
+
   var summary;
-  if (!mapFields_(maps[idx]).length) {
+  if (!mapSources_(maps[idx]).length) {
     summary = emptySummary_();
     summary.awaiting_mapping = true;
     summary.error = 'Connected — now map the columns in the admin console';
+    maps[idx].last = summary;
     saveSyncMaps_(maps);
-    audit_('push-sync', 'sheet_push', maps[idx].brand || '', 'awaiting mapping, ' + rows.length + ' rows');
-    return ok_({ awaiting_mapping: true, headers: headers, rows: rows.length });
+    audit_('push-sync', 'sheet_push', maps[idx].brand || '', 'awaiting mapping, ' + meta.length + ' tabs');
+    return ok_({ awaiting_mapping: true, tabs: meta.map(function (m) { return m.name; }),
+                 headers: maps[idx].headers });
   }
 
-  summary = applySyncRows_(maps[idx], headers, rows, 'push-sync');
+  summary = applySyncData_(maps[idx], tabData, 'push-sync');
   maps[idx].last = summary;
   saveSyncMaps_(maps);
   return ok_({ summary: summary });

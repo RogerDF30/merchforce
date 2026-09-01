@@ -281,23 +281,35 @@ const ACTIONS = {
         top_searches: topKeys(searches), searches_with_nothing: topKeys(searchesNil) } };
   },
   adminSyncPreview: b => (String(b.sheet||'').length > 5
-    ? { ok: true, sheet_id: 'mock-sheet-' + String(b.sheet).slice(-6), tabs: ['Wenger Stock','Price List'], tab: b.tab || 'Wenger Stock',
+    ? { ok: true, sheet_id: 'mock-sheet-' + String(b.sheet).slice(-6),
+        tabs: ['Wenger Stock','Price List'], tab: b.tab || 'Wenger Stock',
+        all_tabs: [
+          { name: 'Wenger Stock', rows: 3,
+            headers: ['WWW','Code','Product Name','MRP','Selling Price Excluding GST','Stock'],
+            sample: [['1','611644','MX Cross Body Bag','2100','1000','361']] },
+          { name: 'Price List', rows: 25,
+            headers: ['Code','Product Name','MRP','DP Excluding GST','Link for photos'],
+            sample: [['612264','Wenger MX ECO Waist pack','2200','898','https://drive…'],
+                     ['611644','MX Cross Body Bag - 3 Litres','2100','855','https://drive…']] }
+        ],
         headers: ['WWW','Code','Product Name','MRP','Selling Price Excluding GST','Stock'],
-        sample: [['1','URBAN-294','Ebony Bottle','1349','824','2600'],['2','UG 02','Eco Cork Mug','449','200','3900'],['3','B30906','Adidas Polo','2099','1199','450']],
-        rows: 24, owner_hint: 'merchforce-backend@companystore.io' }
+        sample: [['1','611644','MX Cross Body Bag','2100','1000','361']],
+        rows: 3, owner_hint: 'merchforce-backend@companystore.io' }
     : { ok: false, error: 'Paste the supplier sheet link or ID' }),
   adminSyncMapSave: b => {
     const maps = JSON.parse(db.settings.sync_maps || '[]');
     const mode = b.map.mode === 'push' ? 'push' : 'pull';
     const rec = { mode, brand: b.map.brand || '', sheet: b.map.sheet, tab: b.map.tab || '', sku_col: b.map.sku_col || '',
       fields: b.map.fields || (b.map.stock_col ? [{ col: b.map.stock_col, field: 'on_hand' }] : []),
-      create_new: !!b.map.create_new, push_key: '', headers: null, sample: null, last: null };
-    if (mode === 'pull' && !rec.fields.length) return { ok: false, error: 'Sheet, SKU column and at least one field mapping are required' };
+      sources: b.map.sources || [], create_new: !!b.map.create_new,
+      push_key: '', headers: null, sample: null, tabs_meta: null, last: null };
+    if (mode === 'pull' && !(rec.sources.length || rec.fields.length)) return { ok: false, error: 'Sheet, SKU column and at least one field mapping are required' };
     if (mode === 'push' && !rec.brand) return { ok: false, error: 'A push mapping must be bound to one brand' };
     if (rec.create_new && !rec.brand) return { ok: false, error: 'To auto-create new products, the mapping must be bound to one brand' };
     if (b.index !== undefined && maps[b.index]) {
       rec.last = maps[b.index].last; rec.push_key = maps[b.index].push_key || '';
       rec.headers = maps[b.index].headers || null; rec.sample = maps[b.index].sample || null;
+      rec.tabs_meta = maps[b.index].tabs_meta || null;
       maps[b.index] = rec;
     } else maps.push(rec);
     if (mode === 'push' && !rec.push_key) rec.push_key = 'mfp_mock' + Math.random().toString(36).slice(2, 10);
@@ -308,13 +320,16 @@ const ACTIONS = {
     const maps = JSON.parse(db.settings.sync_maps || '[]');
     const i = maps.findIndex(x => x.push_key && x.push_key === b.push_key);
     if (i < 0) return { ok: false, error: 'Unknown push key' };
-    maps[i].headers = (b.headers || []).map(String);
-    maps[i].sample = (b.rows || []).slice(0, 3);
-    const mapped = (maps[i].fields || []).length;
+    const tabs = b.tabs && b.tabs.length ? b.tabs : [{ name: '', headers: b.headers || [], rows: b.rows || [] }];
+    maps[i].tabs_meta = tabs.map(t => ({ name: String(t.name || ''), headers: (t.headers || []).map(String),
+                                         rows: (t.rows || []).length, sample: (t.rows || []).slice(0, 3) }));
+    maps[i].headers = maps[i].tabs_meta[0].headers;
+    maps[i].sample = maps[i].tabs_meta[0].sample;
+    const mapped = ((maps[i].sources || []).length || (maps[i].fields || []).length);
     if (!mapped) {
       maps[i].last = { ts: new Date().toString(), awaiting_mapping: true, error: 'Connected — now map the columns in the admin console', matched: 0, updated: 0, unchanged: 0, created: 0, unknown: 0, off_brand: 0, unknown_skus: [], created_skus: [] };
       db.settings.sync_maps = JSON.stringify(maps);
-      return { ok: true, awaiting_mapping: true, headers: maps[i].headers, rows: (b.rows || []).length };
+      return { ok: true, awaiting_mapping: true, tabs: maps[i].tabs_meta.map(t => t.name), headers: maps[i].headers };
     }
     const summary = { ts: new Date().toString(), matched: 3, updated: 1, unchanged: 2, created: 0, unknown: 0, off_brand: 0, unknown_skus: [], created_skus: [], error: null };
     maps[i].last = summary;
