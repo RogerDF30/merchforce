@@ -192,7 +192,6 @@ function applySyncRows_(map, rawHeaders, data, actor) {
       if (i < 0) throw new Error('Column "' + f.col + '" not found — re-map the columns');
       return { i: i, field: f.field, numeric: !!SYNC_FIELDS[f.field].numeric };
     });
-    var data = lastRow > 1 ? o.sh.getRange(2, 1, lastRow - 1, lastCol).getValues() : [];
 
     var incoming = {}; // skuKey -> {sku, values:{field: value}} (last row wins)
     data.forEach(function (row) {
