@@ -573,6 +573,22 @@ $('fStock').addEventListener('change', function () { S.stock = this.value; rende
 $('fSort').addEventListener('change', function () { S.sort = this.value; render(); });
 $('fBudget').addEventListener('input', function () { S.budget = this.value; render(); });
 $('cartBtn').onclick = openDrawer;
+// signed-in buyers get their order history
+function showMyOrders() {
+  api('orderList', { session: S.session }).then(function (res) {
+    var html = res.orders.length ? res.orders.map(function (o) {
+      return '<div class="cline" style="display:block"><div class="n">' + esc(o.id) + ' · ' + esc(o.status) + '</div>' +
+        '<div class="s">' + new Date(o.created).toLocaleDateString('en-IN') + ' · ' + inr(o.pi_total || o.total_est) + '</div>' +
+        (o.pi_url ? '<a class="s" href="' + esc(o.pi_url) + '" target="_blank">PI</a> ' : '') +
+        (o.po_url ? '<a class="s" href="' + esc(o.po_url) + '" target="_blank">PO</a>' : '') + '</div>';
+    }).join('') : '<div class="empty">No orders yet</div>';
+    $('dBody').innerHTML = '<h3 style="margin:4px 0 10px">My orders</h3>' + html;
+    $('dFoot').innerHTML = '<button class="btn" id="backCart" style="width:100%;justify-content:center">Back to request list</button>';
+    $('backCart').onclick = renderCart;
+    $('drawer').classList.add('open');
+  }).catch(function (e) { toast(e.message); });
+}
+window.showMyOrders = showMyOrders;
 $('dClose').onclick = closeDrawer;
 $('pClose').onclick = closeProduct;
 $('pOverlay').addEventListener('click', function (e) { if (e.target === this) closeProduct(); });

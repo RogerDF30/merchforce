@@ -29,7 +29,8 @@ function fnRequestSubmit_(p) {
     var price = 0;
     (tiers[skuKey_(ln.sku)] || []).sort(function (a, b) { return a.min - b.min; })
       .forEach(function (t) { if (qty >= t.min) price = t.price; });
-    cleaned.push({ sku: String(ln.sku), name: pr.name, qty: qty, price: price, total: qty * price });
+    cleaned.push({ sku: String(ln.sku), name: pr.name, qty: qty, price: price,
+                   total: qty * price, gst: toNum_(pr.gst_rate) });
   }
 
   var id = nextRequestId_();
@@ -40,12 +41,14 @@ function fnRequestSubmit_(p) {
     email: String(p.email).slice(0, 150), phone: String(p.phone || '').slice(0, 30),
     gstin: String(p.gstin || '').slice(0, 20), notes: String(p.notes || '').slice(0, 1000),
     user_email: String(p.user_email || ''), total_est: total,
-    status_dates: JSON.stringify({ New: String(now_()) }), admin_notes: '', updated: now_()
+    status_dates: JSON.stringify({ New: String(now_()) }), admin_notes: '', updated: now_(),
+    token: randomToken_(28), stock_state: ''
   });
   cleaned.forEach(function (l, idx) {
     appendRecord_('RequestLines', {
       request_id: id, line: idx + 1, sku: l.sku, name: l.name,
-      qty: l.qty, unit_price: l.price, line_total: l.total
+      qty: l.qty, unit_price: l.price, line_total: l.total,
+      list_price: l.price, gst: l.gst, hsn: ''
     });
   });
   fnTrack_({ events: cleaned.map(function (l) { return { sku: l.sku, type: 'request' }; }) });

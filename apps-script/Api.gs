@@ -27,7 +27,12 @@ function doPost(e) {
       request: fnRequestSubmit_,
       login:   fnLogin_,
       syncPing: fnSyncPing_,
-      syncPush: fnSyncPush_
+      syncPush: fnSyncPush_,
+      // the client's own order page — authorised by the order's token
+      orderView:      fnOrderView_,
+      orderPiRespond: fnOrderPiRespond_,
+      orderPoUpload:  fnOrderPoUpload_,
+      orderList:      fnOrderList_
     };
     var ADMIN = {
       adminUnlock:        fnAdminUnlock_,
@@ -51,7 +56,14 @@ function doPost(e) {
       adminSyncMapDelete: fnAdminSyncMapDelete_,
       adminSyncTemplate:  fnAdminSyncTemplate_,
       adminDedupe:        fnAdminDedupe_,
-      adminMailTest:      fnAdminMailTest_
+      adminMailTest:      fnAdminMailTest_,
+      adminOrders:        fnAdminOrders_,
+      adminRequestDecide: fnAdminRequestDecide_,
+      adminPiBuild:       fnAdminPiBuild_,
+      adminPiUpload:      fnAdminPiUpload_,
+      adminPoUpload:      fnAdminPoUpload_,
+      adminShipmentSave:  fnAdminShipmentSave_,
+      adminShipmentDelete: fnAdminShipmentDelete_
     };
 
     if (PUBLIC[p.action]) {

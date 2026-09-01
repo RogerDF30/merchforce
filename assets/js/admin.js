@@ -14,7 +14,7 @@ var A = {
   days: 90, loaded: {}, syncPreview: null
 };
 
-var STATUSES = ['New', 'Under Review', 'Quoted', 'Confirmed', 'Dispatched', 'Closed', 'Rejected', 'Expired'];
+var STATUSES = ['New', 'Accepted', 'PI Sent', 'PI Accepted', 'PO Received', 'In Production', 'Dispatched', 'Delivered', 'Closed', 'Rejected', 'Declined', 'Expired', 'Cancelled'];
 
 /* ---------- plumbing ---------- */
 function $(id) { return document.getElementById(id); }
@@ -94,12 +94,15 @@ document.querySelectorAll('#tabs .chip').forEach(function (t) {
   };
 });
 
-/* ================= REQUESTS ================= */
+/* ================= ORDERS ================= */
+var STAGES = ['New', 'Accepted', 'PI Sent', 'PI Accepted', 'PO Received', 'In Production', 'Dispatched', 'Delivered'];
+
 function loadRequests() {
   A.loaded.requests = true;
   $('p-requests').innerHTML = '<div class="spin"></div>';
-  api('adminRequests').then(function (res) {
-    A.requests = res.requests;
+  api('adminOrders').then(function (res) {
+    A.requests = res.orders;
+    A.siteUrl = res.site_url || '';
     renderRequests();
   }).catch(function (e) { $('p-requests').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
 }
@@ -107,77 +110,298 @@ function loadRequests() {
 function stat(v, l) { return '<div class="stat"><div class="stat-n">' + v + '</div><div class="stat-l">' + l + '</div></div>'; }
 
 function renderRequests() {
-  var open = A.requests.filter(function (r) { return ['Closed', 'Rejected', 'Expired'].indexOf(r.status) < 0; });
+  var active = A.requests.filter(function (r) { return r.active; });
+  var done = A.requests.filter(function (r) { return !r.active; });
+  A.orderView = A.orderView || 'active';
+  var rows = A.orderView === 'active' ? active : done;
   $('p-requests').innerHTML =
     '<div class="stat-row">' +
-      stat(A.requests.filter(function (r) { return r.status === 'New'; }).length, 'New') +
-      stat(open.length, 'Open pipeline') +
-      stat(A.requests.filter(function (r) { return r.status === 'Confirmed'; }).length, 'Confirmed') +
-      stat(inr(open.reduce(function (s, r) { return s + r.total_est; }, 0)), 'Open value (est)') +
+      stat(A.requests.filter(function (r) { return r.status === 'New'; }).length, 'Awaiting decision') +
+      stat(A.requests.filter(function (r) { return r.status === 'PI Sent'; }).length, 'PI with client') +
+      stat(A.requests.filter(function (r) { return ['PO Received', 'In Production', 'Dispatched'].indexOf(r.status) >= 0; }).length, 'In fulfilment') +
+      stat(inr(active.reduce(function (s, r) { return s + (r.pi_total || r.total_est); }, 0)), 'Active value') +
     '</div>' +
-    '<div class="panel-head"><h2>Requests</h2><span class="sp"></span>' +
-      '<select id="rFilter" style="padding:8px 12px;border:1px solid var(--line);border-radius:10px"><option value="">All statuses</option>' +
-      STATUSES.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select>' +
-      '<button class="btn small" id="rReload">Refresh</button></div>' +
+    '<div class="panel-head"><h2>Orders</h2>' +
+      '<div class="seg" id="ordSeg">' +
+        '<button data-v="active" class="' + (A.orderView === 'active' ? 'on' : '') + '">Active (' + active.length + ')</button>' +
+        '<button data-v="done" class="' + (A.orderView === 'done' ? 'on' : '') + '">Completed (' + done.length + ')</button>' +
+      '</div>' +
+      '<span class="sp"></span><button class="btn small" id="rReload">Refresh</button></div>' +
     '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
-      '<th>ID</th><th>Created</th><th>Company</th><th class="num">Lines</th><th class="num">Est. value</th><th>Status</th>' +
+      '<th>ID</th><th>Created</th><th>Company</th><th>Docs</th><th class="num">Value</th><th>Stock</th><th>Status</th>' +
     '</tr></thead><tbody id="rRows"></tbody></table></div>';
   $('rReload').onclick = loadRequests;
-  $('rFilter').onchange = paintRequestRows;
-  paintRequestRows();
-}
-
-function paintRequestRows() {
-  var f = $('rFilter').value;
-  var rows = A.requests.filter(function (r) { return !f || r.status === f; });
+  $('ordSeg').querySelectorAll('button').forEach(function (b) {
+    b.onclick = function () { A.orderView = b.dataset.v; renderRequests(); };
+  });
   var tb = $('rRows');
-  tb.innerHTML = rows.length ? '' : '<tr><td colspan="6" class="empty">No requests</td></tr>';
+  tb.innerHTML = rows.length ? '' : '<tr><td colspan="7" class="empty">Nothing here</td></tr>';
   rows.forEach(function (r) {
     var tr = document.createElement('tr');
     tr.className = 'click';
     tr.innerHTML = '<td><b>' + esc(r.id) + '</b></td><td>' + fmtDate(r.created) + '</td>' +
       '<td>' + esc(r.company) + '<br><small style="color:var(--ink-3)">' + esc(r.contact) + '</small></td>' +
-      '<td class="num">' + r.lines.length + '</td><td class="num">' + inr(r.total_est) + '</td><td>' + statusPill(r.status) + '</td>';
-    tr.onclick = function () { openRequest(r); };
+      '<td style="font-size:12px">' + (r.pi_url ? '<a href="' + esc(r.pi_url) + '" target="_blank" onclick="event.stopPropagation()">PI</a>' : '<span style="color:var(--ink-3)">—</span>') +
+        ' · ' + (r.po_url ? '<a href="' + esc(r.po_url) + '" target="_blank" onclick="event.stopPropagation()">PO</a>' : '<span style="color:var(--ink-3)">—</span>') + '</td>' +
+      '<td class="num">' + inr(r.pi_total || r.total_est) + '</td>' +
+      '<td style="font-size:12px">' + (r.stock_state === 'reserved' ? '<span class="pill" style="background:var(--warn-soft);color:var(--warn)">held</span>'
+        : r.stock_state === 'deducted' ? '<span class="pill" style="background:var(--ok-soft);color:var(--ok)">deducted</span>' : '—') + '</td>' +
+      '<td>' + statusPill(r.status) + '</td>';
+    tr.onclick = function () { openOrder(r); };
     tb.appendChild(tr);
   });
 }
 
-function openRequest(r) {
+function orderTimeline(r) {
+  var done = STAGES.indexOf(r.status);
+  if (['Rejected', 'Declined', 'Expired', 'Cancelled'].indexOf(r.status) >= 0) {
+    return '<div class="note2 warn"><b>' + esc(r.status) + '</b> — closed. ' +
+      (r.stock_state ? 'Stock state: ' + esc(r.stock_state) : 'No stock held.') + '</div>';
+  }
+  return '<div class="stage-row">' + STAGES.map(function (st, i) {
+    var cls = i < done ? 'done' : (i === done ? 'now' : '');
+    var when = r.status_dates[st] ? new Date(r.status_dates[st]) : null;
+    return '<div class="stage ' + cls + '"><span class="dot"></span><span class="lbl">' + esc(st) + '</span>' +
+      (when && !isNaN(when) ? '<span class="when">' + when.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + '</span>' : '') + '</div>';
+  }).join('') + '</div>';
+}
+
+function openOrder(r) {
+  var link = A.siteUrl ? A.siteUrl + '/order.html?t=' + r.token : '';
+  var next = '';
+  if (r.status === 'New') {
+    next = '<button class="btn primary small" id="oAccept">Accept request</button> ' +
+           '<button class="btn danger small" id="oReject">Reject</button>';
+  } else if (['Accepted', 'PI Sent'].indexOf(r.status) >= 0) {
+    next = '<button class="btn primary small" id="oQuote">' + (r.pi_number ? 'Revise quotation' : 'Create quotation (PI)') + '</button> ' +
+           '<button class="btn small" id="oPiUp">Upload PI instead</button>';
+  } else if (r.status === 'PI Accepted') {
+    next = '<button class="btn primary small" id="oPoUp">Upload purchase order</button>';
+  } else if (['PO Received', 'In Production', 'Dispatched'].indexOf(r.status) >= 0) {
+    next = '<button class="btn primary small" id="oShip">Add shipment</button>';
+  }
+
   openDrawer(
     '<h2 style="margin:0 0 2px">' + esc(r.id) + ' ' + statusPill(r.status) + '</h2>' +
-    '<p style="color:var(--ink-3);margin:0 0 14px;font-size:13.5px">' + fmtDate(r.created) + '</p>' +
+    '<p style="color:var(--ink-3);margin:0 0 14px;font-size:13.5px">' + esc(r.company) + ' · ' + fmtDate(r.created) + '</p>' +
+    orderTimeline(r) +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">' + next +
+      (link ? ' <button class="btn small" id="oLink">Copy client link</button>' : '') + '</div>' +
     '<div class="two-col" style="margin-bottom:14px">' +
-      '<div class="card-block"><h3>Buyer</h3>' +
-        '<b>' + esc(r.company) + '</b><br>' + esc(r.contact) + '<br>' +
+      '<div class="card-block"><h3>Buyer</h3><b>' + esc(r.company) + '</b><br>' + esc(r.contact) + '<br>' +
         '<a href="mailto:' + esc(r.email) + '">' + esc(r.email) + '</a><br>' + esc(r.phone || '') +
         (r.gstin ? '<br>GSTIN: ' + esc(r.gstin) : '') + '</div>' +
-      '<div class="card-block"><h3>Buyer notes</h3><div style="font-size:13.5px;color:var(--ink-2)">' +
-        (esc(r.notes) || '—') + '</div></div>' +
+      '<div class="card-block"><h3>Documents</h3>' +
+        (r.pi_url ? 'PI <b>' + esc(r.pi_number) + '</b> · ' + inr(r.pi_total) +
+          (r.pi_valid_till ? ' · valid till ' + esc(r.pi_valid_till) : '') +
+          '<br><a href="' + esc(r.pi_url) + '" target="_blank">Open PI ↗</a><br>' : '<span style="color:var(--ink-3)">No PI yet</span><br>') +
+        (r.po_url ? 'PO ' + esc(r.po_number || '') + '<br><a href="' + esc(r.po_url) + '" target="_blank">Open PO ↗</a>' : '<span style="color:var(--ink-3)">No PO yet</span>') +
+        (r.folder_id ? '<br><a href="https://drive.google.com/drive/folders/' + esc(r.folder_id) + '" target="_blank">Order folder ↗</a>' : '') +
+      '</div>' +
     '</div>' +
     '<div class="tbl-wrap" style="margin-bottom:14px"><table class="tbl"><thead>' +
-      '<tr><th>SKU</th><th>Product</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th></tr></thead><tbody>' +
+      '<tr><th>SKU</th><th>Product</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">GST</th><th class="num">Total</th></tr></thead><tbody>' +
       r.lines.map(function (l) {
         return '<tr><td>' + esc(l.sku) + '</td><td>' + esc(l.name) + '</td><td class="num">' + qty(l.qty) +
-          '</td><td class="num">' + inr(l.unit_price) + '</td><td class="num">' + inr(l.line_total) + '</td></tr>';
-      }).join('') +
-      '<tr><td colspan="4" style="text-align:right;font-weight:800">Estimated total</td>' +
-      '<td class="num" style="font-weight:800">' + inr(r.total_est) + '</td></tr>' +
-    '</tbody></table></div>' +
+          '</td><td class="num">' + (l.list_price && l.list_price > l.unit_price ? '<span class="mrp">' + inr(l.list_price) + '</span> ' : '') +
+          inr(l.unit_price) + '</td><td class="num">' + (l.gst || 0) + '%</td><td class="num">' + inr(l.line_total) + '</td></tr>';
+      }).join('') + '</tbody></table></div>' +
+    (r.shipments.length ? '<div class="tbl-wrap" style="margin-bottom:14px"><table class="tbl"><thead>' +
+      '<tr><th>#</th><th>Date</th><th>Carrier</th><th>Tracking</th><th class="num">Qty</th><th>Status</th><th></th></tr></thead><tbody>' +
+      r.shipments.map(function (s) {
+        return '<tr><td>' + s.no + '</td><td>' + esc(String(s.date).slice(0, 10)) + '</td><td>' + esc(s.carrier) + '</td>' +
+          '<td>' + esc(s.tracking) + '</td><td class="num">' + (s.qty || '') + '</td>' +
+          '<td>' + statusPill(s.status) + '</td>' +
+          '<td><button class="btn ghost small" data-shed="' + s.no + '">Edit</button></td></tr>';
+      }).join('') + '</tbody></table></div>' : '') +
     '<div class="field"><label>Internal notes</label><textarea id="mNotes">' + esc(r.admin_notes || '') + '</textarea></div>' +
-    '<div class="field"><label>Status</label><select id="mStatus">' +
+    '<div class="field"><label>Status (override)</label><select id="mStatus">' +
       STATUSES.map(function (s) { return '<option' + (s === r.status ? ' selected' : '') + '>' + s + '</option>'; }).join('') +
     '</select></div>' +
-    '<p class="note">Confirmed reserves stock (checked against ATP — first confirmed wins). ' +
-      'Dispatched consumes it. Rejecting or expiring a confirmed request releases the reservation.</p>' +
+    '<p class="note">Stock is held when the client accepts the PI and deducted when the purchase order lands. Overriding the status moves stock the same way.</p>' +
     '<div class="form-err" id="mErr"></div>' +
-    '<button class="btn primary" id="mSave" style="width:100%;justify-content:center">Save</button>');
+    '<button class="btn primary" id="mSave" style="width:100%;justify-content:center">Save notes / status</button>');
+
+  if ($('oLink')) $('oLink').onclick = function () {
+    try { navigator.clipboard.writeText(link); } catch (e) {}
+    toast('Client link copied');
+  };
+  if ($('oAccept')) $('oAccept').onclick = function () { decide(r, true); };
+  if ($('oReject')) $('oReject').onclick = function () { decide(r, false); };
+  if ($('oQuote')) $('oQuote').onclick = function () { openQuoteBuilder(r); };
+  if ($('oPiUp')) $('oPiUp').onclick = function () { uploadDoc(r, 'pi'); };
+  if ($('oPoUp')) $('oPoUp').onclick = function () { uploadDoc(r, 'po'); };
+  if ($('oShip')) $('oShip').onclick = function () { openShipment(r, null); };
+  document.querySelectorAll('button[data-shed]').forEach(function (b) {
+    b.onclick = function () {
+      openShipment(r, r.shipments.filter(function (s) { return s.no === Number(b.dataset.shed); })[0]);
+    };
+  });
   $('mSave').onclick = function () {
     $('mSave').disabled = true;
     $('mErr').textContent = '';
     api('adminRequestUpdate', { id: r.id, status: $('mStatus').value, admin_notes: $('mNotes').value })
       .then(function () { closeDrawer(); toast(r.id + ' saved'); loadRequests(); })
       .catch(function (e) { $('mErr').textContent = e.message; $('mSave').disabled = false; });
+  };
+}
+
+function decide(r, accept) {
+  var note = accept ? '' : (prompt('Reason for the client (optional)') || '');
+  api('adminRequestDecide', { id: r.id, accept: accept, note: note })
+    .then(function (res) { closeDrawer(); toast(r.id + ' → ' + res.status); loadRequests(); })
+    .catch(function (e) { toast(e.message); });
+}
+
+/* Quotation Builder — negotiated prices, freight, discount, then a GST PI PDF. */
+function openQuoteBuilder(r) {
+  var draft = r.lines.map(function (l) {
+    return { sku: l.sku, name: l.name, qty: l.qty, unit_price: l.unit_price,
+             gst: l.gst || 18, hsn: l.hsn || '', list_price: l.list_price || l.unit_price };
+  });
+  openDrawer(
+    '<h2 style="margin:0 0 4px">Quotation for ' + esc(r.id) + '</h2>' +
+    '<p class="note" style="margin:0 0 14px">Edit quantities and unit prices freely — the negotiated price replaces the catalog price on this order. The PI is generated as a PDF into the order folder and emailed to the client with Accept / Decline.</p>' +
+    '<div id="qLines"></div>' +
+    '<div class="f2" style="margin-top:12px">' +
+      '<div class="field"><label>Freight / handling ₹</label><input id="qFreight" type="number" min="0" value="0"></div>' +
+      '<div class="field"><label>Discount ₹</label><input id="qDisc" type="number" min="0" value="0"></div>' +
+      '<div class="field"><label>Validity (days)</label><input id="qDays" type="number" min="1" value="' + esc(A.settings.pi_validity_days || 15) + '"></div>' +
+      '<div class="field"><label>Place of supply (GST state code)</label><input id="qPos" value="' + esc(r.place_of_supply || (r.gstin || '').slice(0, 2)) + '" placeholder="e.g. 29"></div>' +
+    '</div>' +
+    '<div class="field"><label>Ship to address</label><textarea id="qShip">' + esc(r.ship_address || '') + '</textarea></div>' +
+    '<div class="field"><label>Notes on the PI</label><textarea id="qNotes"></textarea></div>' +
+    '<div class="panel2" style="margin:12px 0"><b>Total</b> <span id="qTotal" style="float:right;font-weight:800"></span></div>' +
+    '<div class="form-err" id="mErr"></div>' +
+    '<div style="display:flex;gap:10px">' +
+      '<button class="btn" id="qSaveOnly" style="flex:1;justify-content:center">Generate PI only</button>' +
+      '<button class="btn primary" id="qSend" style="flex:1;justify-content:center">Generate &amp; send to client</button>' +
+    '</div>');
+
+  function total() {
+    var t = draft.reduce(function (a, l) {
+      var amt = Number(l.qty) * Number(l.unit_price);
+      return a + amt + amt * Number(l.gst || 0) / 100;
+    }, 0) + Number($('qFreight').value || 0) - Number($('qDisc').value || 0);
+    $('qTotal').textContent = inr(Math.round(t * 100) / 100);
+  }
+  function paint() {
+    $('qLines').innerHTML = draft.map(function (l, i) {
+      return '<div class="panel2" style="padding:12px 14px;margin-bottom:8px">' +
+        '<b>' + esc(l.name) + '</b> <span style="color:var(--ink-3);font-size:12px">' + esc(l.sku) + '</span>' +
+        '<div class="tier-row" style="margin-top:8px">' +
+          'Qty <input type="number" min="0" data-q="' + i + '" value="' + l.qty + '" style="width:90px;padding:7px 9px;border:1px solid var(--line);border-radius:8px">' +
+          ' @ ₹ <input type="number" min="0" step="0.01" data-p="' + i + '" value="' + l.unit_price + '" style="width:110px;padding:7px 9px;border:1px solid var(--line);border-radius:8px">' +
+          (l.list_price && l.list_price !== l.unit_price ? '<span style="font-size:12px;color:var(--ink-3)">list ' + inr(l.list_price) + '</span>' : '') +
+          ' GST <input type="number" min="0" step="0.01" data-g="' + i + '" value="' + l.gst + '" style="width:70px;padding:7px 9px;border:1px solid var(--line);border-radius:8px">%' +
+          ' HSN <input data-h="' + i + '" value="' + esc(l.hsn) + '" style="width:90px;padding:7px 9px;border:1px solid var(--line);border-radius:8px">' +
+          ' <button type="button" class="btn ghost small" data-x="' + i + '" style="color:var(--bad)">✕</button>' +
+        '</div></div>';
+    }).join('');
+    $('qLines').querySelectorAll('input').forEach(function (inp) {
+      inp.oninput = function () {
+        var d = inp.dataset;
+        var i = Number(d.q !== undefined ? d.q : d.p !== undefined ? d.p : d.g !== undefined ? d.g : d.h);
+        if (d.q !== undefined) draft[i].qty = Number(inp.value);
+        if (d.p !== undefined) draft[i].unit_price = Number(inp.value);
+        if (d.g !== undefined) draft[i].gst = Number(inp.value);
+        if (d.h !== undefined) draft[i].hsn = inp.value;
+        total();
+      };
+    });
+    $('qLines').querySelectorAll('button[data-x]').forEach(function (b) {
+      b.onclick = function () { draft.splice(Number(b.dataset.x), 1); paint(); total(); };
+    });
+  }
+  paint(); total();
+  $('qFreight').oninput = total; $('qDisc').oninput = total;
+
+  function build(send) {
+    var btn = send ? $('qSend') : $('qSaveOnly');
+    btn.disabled = true; btn.textContent = 'Generating…';
+    api('adminPiBuild', {
+      id: r.id, lines: draft, freight: Number($('qFreight').value || 0),
+      discount: Number($('qDisc').value || 0), validity_days: Number($('qDays').value || 15),
+      place_of_supply: $('qPos').value.trim(), ship_address: $('qShip').value,
+      notes: $('qNotes').value, send: send
+    }).then(function (res) {
+      closeDrawer();
+      toast('PI ' + res.pi_number + ' created' + (send ? ' and sent' : ''));
+      loadRequests();
+    }).catch(function (e) {
+      $('mErr').textContent = e.message;
+      btn.disabled = false; btn.textContent = send ? 'Generate & send to client' : 'Generate PI only';
+    });
+  }
+  $('qSend').onclick = function () { build(true); };
+  $('qSaveOnly').onclick = function () { build(false); };
+}
+
+function uploadDoc(r, kind) {
+  var isPi = kind === 'pi';
+  openDrawer(
+    '<h2 style="margin:0 0 4px">Upload ' + (isPi ? 'proforma invoice' : 'purchase order') + ' — ' + esc(r.id) + '</h2>' +
+    '<p class="note" style="margin:0 0 14px">' + (isPi
+      ? 'Use this when the PI was produced in your own system. It is filed in the order folder and sent to the client for acceptance.'
+      : 'Use this when the client sent their PO by email or any other route. Filing it here deducts the stock and confirms the order.') + '</p>' +
+    '<div class="f2">' +
+      '<div class="field"><label>' + (isPi ? 'PI' : 'PO') + ' number</label><input id="uNum" value="' + esc(isPi ? r.pi_number : r.po_number) + '"></div>' +
+      (isPi ? '<div class="field"><label>PI total ₹</label><input id="uTotal" type="number" min="0" value="' + (r.pi_total || r.total_est || 0) + '"></div>' : '') +
+    '</div>' +
+    '<div class="field"><label>File (PDF)</label><input id="uFile" type="file" accept=".pdf,image/*"></div>' +
+    '<div class="form-err" id="mErr"></div>' +
+    '<button class="btn primary" id="uGo" style="width:100%;justify-content:center">Upload' + (isPi ? ' &amp; send' : '') + '</button>');
+  $('uGo').onclick = function () {
+    var f = $('uFile').files[0];
+    if (!f) { $('mErr').textContent = 'Choose a file first.'; return; }
+    if (f.size > 10 * 1024 * 1024) { $('mErr').textContent = 'File is over 10MB.'; return; }
+    $('uGo').disabled = true; $('uGo').textContent = 'Uploading…';
+    var rd = new FileReader();
+    rd.onload = function () {
+      var body = { id: r.id, filename: f.name, mime: f.type, data: rd.result };
+      if (isPi) { body.pi_number = $('uNum').value.trim(); body.pi_total = Number($('uTotal').value || 0); }
+      else { body.po_number = $('uNum').value.trim(); }
+      api(isPi ? 'adminPiUpload' : 'adminPoUpload', body)
+        .then(function () { closeDrawer(); toast('Uploaded'); loadRequests(); })
+        .catch(function (e) { $('mErr').textContent = e.message; $('uGo').disabled = false; $('uGo').textContent = 'Upload'; });
+    };
+    rd.readAsDataURL(f);
+  };
+}
+
+function openShipment(r, sh) {
+  sh = sh || { no: 0, date: new Date().toISOString().slice(0, 10), carrier: '', tracking: '', qty: '', note: '', status: 'Dispatched' };
+  openDrawer(
+    '<h2 style="margin:0 0 14px">' + (sh.no ? 'Shipment ' + sh.no : 'New shipment') + ' — ' + esc(r.id) + '</h2>' +
+    '<div class="f2">' +
+      '<div class="field"><label>Ship date</label><input id="sDate" type="date" value="' + esc(String(sh.date).slice(0, 10)) + '"></div>' +
+      '<div class="field"><label>Quantity in this shipment</label><input id="sQty" type="number" min="0" value="' + (sh.qty || '') + '"></div>' +
+      '<div class="field"><label>Carrier</label><input id="sCarrier" value="' + esc(sh.carrier) + '"></div>' +
+      '<div class="field"><label>Tracking number</label><input id="sTrack" value="' + esc(sh.tracking) + '"></div>' +
+    '</div>' +
+    '<div class="field"><label>Note</label><input id="sNote" value="' + esc(sh.note) + '"></div>' +
+    '<div class="field"><label>Status</label><select id="sStatus">' +
+      '<option' + (sh.status === 'Dispatched' ? ' selected' : '') + '>Dispatched</option>' +
+      '<option' + (sh.status === 'Delivered' ? ' selected' : '') + '>Delivered</option>' +
+    '</select></div>' +
+    '<p class="note">The client is emailed the tracking details. When every shipment is marked delivered the order moves to Delivered.</p>' +
+    '<div class="form-err" id="mErr"></div>' +
+    '<div style="display:flex;gap:10px">' +
+      (sh.no ? '<button class="btn danger" id="sDel">Delete</button>' : '') +
+      '<button class="btn primary" id="sSave" style="flex:1;justify-content:center">Save shipment</button></div>');
+  $('sSave').onclick = function () {
+    $('sSave').disabled = true;
+    api('adminShipmentSave', { id: r.id, shipment: {
+      shipment_no: sh.no, ship_date: $('sDate').value, qty: Number($('sQty').value || 0),
+      carrier: $('sCarrier').value.trim(), tracking: $('sTrack').value.trim(),
+      note: $('sNote').value.trim(), status: $('sStatus').value
+    } }).then(function () { closeDrawer(); toast('Shipment saved'); loadRequests(); })
+      .catch(function (e) { $('mErr').textContent = e.message; $('sSave').disabled = false; });
+  };
+  if ($('sDel')) $('sDel').onclick = function () {
+    api('adminShipmentDelete', { id: r.id, shipment_no: sh.no })
+      .then(function () { closeDrawer(); toast('Shipment removed'); loadRequests(); })
+      .catch(function (e) { $('mErr').textContent = e.message; });
   };
 }
 

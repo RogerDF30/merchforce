@@ -250,6 +250,23 @@ a { color: var(--accent); text-decoration: none; }
 }
 @keyframes sp { to { transform: rotate(360deg); } }
 
+
+/* ---------- order stage timeline (client + admin) ---------- */
+.stage-row { display: flex; gap: 4px; margin-bottom: 18px; overflow-x: auto; padding-bottom: 4px; }
+.stage { flex: 1; min-width: 92px; position: relative; padding-top: 20px; text-align: center; font-size: 11.5px; color: var(--ink-3); }
+.stage .dot { position: absolute; top: 3px; left: 50%; transform: translateX(-50%); width: 12px; height: 12px; border-radius: 999px; background: var(--line); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); }
+.stage::before { content: ''; position: absolute; top: 8px; left: 0; right: 50%; height: 2px; background: var(--line); }
+.stage::after { content: ''; position: absolute; top: 8px; left: 50%; right: 0; height: 2px; background: var(--line); }
+.stage:first-child::before, .stage:last-child::after { display: none; }
+.stage .lbl { display: block; font-weight: 700; }
+.stage .when { display: block; font-size: 10.5px; }
+.stage.done .dot { background: var(--ok); box-shadow: 0 0 0 1px var(--ok); }
+.stage.done::before, .stage.done::after { background: var(--ok); }
+.stage.done .lbl { color: var(--ink-2); }
+.stage.now .dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.stage.now::before { background: var(--ok); }
+.stage.now .lbl { color: var(--accent); }
+
 /* ---------- admin (RSM-style console) ---------- */
 .admin body, body.admin { background: #fff; }
 .page-head { padding: 26px 0 10px; }
@@ -317,6 +334,14 @@ a { color: var(--accent); text-decoration: none; }
 .st-Dispatched { background: #e3f2fd; color: #1565c0; }
 .st-Closed { background: #eceff1; color: #546e7a; }
 .st-Rejected, .st-Expired { background: var(--bad-soft); color: var(--bad); }
+.st-Accepted { background: #e8f5e9; color: #2e7d32; }
+.st-PISent { background: var(--warn-soft); color: var(--warn); }
+.st-PIAccepted { background: #e3f2fd; color: #1565c0; }
+.st-POReceived { background: var(--ok-soft); color: var(--ok); }
+.st-InProduction { background: #f1e8ff; color: #7a3cf0; }
+.st-Delivered { background: #e8f5e9; color: #2e7d32; }
+.st-Declined, .st-Cancelled { background: var(--bad-soft); color: var(--bad); }
+
 
 /* right-hand edit drawer, like the RSM console */
 .rdrawer { position: fixed; inset: 0; background: rgba(22,25,43,.45); z-index: 80; display: flex; justify-content: flex-end; }

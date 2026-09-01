@@ -34,7 +34,7 @@ const db = {
     reorder_point: Math.round(p.stock * 0.1), visible: 'TRUE', show_price: 'TRUE'
   })),
   tiers: seed.products.flatMap(p => (p.tiers || []).map(t => ({ sku: p.sku, min_qty: t[0], unit_price: t[1] }))),
-  requests: [], lines: [], users: [], events: [], seq: 0
+  requests: [], lines: [], users: [], events: [], shipments: [], seq: 0
 };
 
 // a few demo requests so the admin pipeline isn't empty
@@ -52,19 +52,23 @@ const db = {
       request_id: id, created: created.toISOString(), status, company, contact, email,
       phone: '98' + String(10000000 + daysAgo * 137).slice(0, 8), gstin: '', notes: 'Need branding with our logo.',
       user_email: '', total_est: total, status_dates: JSON.stringify({ New: created.toISOString() }),
-      admin_notes: '', updated: created.toISOString()
+      admin_notes: '', updated: created.toISOString(),
+      token: 'tok' + id.slice(-4), stock_state: '', folder_id: 'mockfolder',
+      pi_number: '', pi_url: '', pi_total: 0, pi_valid_till: '', po_number: '', po_url: '',
+      ship_address: '', place_of_supply: ''
     });
     items.forEach(([sku]) => db.events.push({ date: dstr(created), sku, type: 'request', count: 1 }));
   };
   mk(2, 'New', 'Zenith Analytics', 'Priya Sharma', 'priya@zenith.example', [['URBAN-298', 200], ['1953184', 500]]);
-  mk(5, 'Under Review', 'Cobalt Systems', 'Arjun Mehta', 'arjun@cobalt.example', [['B30906', 150]]);
-  mk(9, 'Quoted', 'Nimbus Retail', 'Sara Ali', 'sara@nimbus.example', [['BT380BLK130', 300], ['CSUN-0276', 400]]);
-  mk(14, 'Confirmed', 'Vertex Labs', 'Rahul Nair', 'rahul@vertex.example', [['UG 02', 250]]);
-  mk(40, 'Closed', 'Origin Works', 'Dev Patel', 'dev@origin.example', [['DN3224', 500]]);
+  mk(5, 'Accepted', 'Cobalt Systems', 'Arjun Mehta', 'arjun@cobalt.example', [['B30906', 150]]);
+  mk(9, 'PI Sent', 'Nimbus Retail', 'Sara Ali', 'sara@nimbus.example', [['BT380BLK130', 300], ['CSUN-0276', 400]]);
+  mk(14, 'PI Accepted', 'Vertex Labs', 'Rahul Nair', 'rahul@vertex.example', [['UG 02', 250]]);
+  mk(40, 'Delivered', 'Origin Works', 'Dev Patel', 'dev@origin.example', [['DN3224', 500]]);
   mk(70, 'Rejected', 'Halo Fintech', 'Ishita Rao', 'ishita@halo.example', [['PARK-002', 100]]);
   // reserve stock for the confirmed one
-  const conf = db.requests.find(r => r.status === 'Confirmed');
-  db.lines.filter(l => l.request_id === conf.request_id).forEach(l => { prodOf(l.sku).reserved += l.qty; });
+  const conf = db.requests.find(r => r.status === 'PI Accepted');
+  if (conf) { conf.stock_state = 'reserved';
+    db.lines.filter(l => l.request_id === conf.request_id).forEach(l => { prodOf(l.sku).reserved += l.qty; }); }
   // search noise
   ['tumbler','hoodie','power bank','laptop bag','diary'].forEach((t,i)=>{
     for (let d=1; d<60; d+=7+i) db.events.push({ date: dstr(new Date(Date.now()-d*864e5)), sku: t, type: 'search', count: 1+(i%3) });
@@ -96,6 +100,48 @@ function pub(p) {
     stock_badge: a <= 0 ? 'out' : a <= low ? 'low' : 'in',
     show_price: p.show_price === 'TRUE', tiers: p.show_price === 'TRUE' ? tiersOf(p.sku) : []
   };
+}
+
+
+function orderOut(r) {
+  return {
+    id: r.request_id, created: r.created, status: r.status, status_dates: JSON.parse(r.status_dates),
+    company: r.company, contact: r.contact, email: r.email, phone: r.phone, gstin: r.gstin,
+    notes: r.notes, admin_notes: r.admin_notes, ship_address: r.ship_address || '',
+    total_est: r.total_est, pi_number: r.pi_number || '', pi_url: r.pi_url || '',
+    pi_total: r.pi_total || 0, pi_valid_till: r.pi_valid_till || '',
+    po_number: r.po_number || '', po_url: r.po_url || '', token: r.token,
+    folder_id: r.folder_id || '', stock_state: r.stock_state || '', place_of_supply: r.place_of_supply || '',
+    lines: db.lines.filter(l => l.request_id === r.request_id).map(l => ({
+      sku: l.sku, name: l.name, qty: l.qty, unit_price: l.unit_price, line_total: l.line_total,
+      list_price: l.list_price || null, gst: l.gst || 0, hsn: l.hsn || '' })),
+    shipments: db.shipments.filter(s => s.request_id === r.request_id).map(s => ({
+      no: s.shipment_no, date: s.ship_date, carrier: s.carrier, tracking: s.tracking,
+      qty: s.qty, note: s.note, status: s.status, delivered_on: s.delivered_on })),
+    active: !['Delivered', 'Closed', 'Rejected', 'Declined', 'Expired', 'Cancelled'].includes(r.status)
+  };
+}
+
+function setStatus(r, status) {
+  const want = ['PI Accepted'].includes(status) ? 'reserved'
+    : ['PO Received', 'In Production', 'Dispatched', 'Delivered', 'Closed'].includes(status) ? 'deducted'
+    : ['Rejected', 'Declined', 'Expired', 'Cancelled'].includes(status) ? '' : null;
+  const lines = db.lines.filter(l => l.request_id === r.request_id);
+  if (want !== null && want !== r.stock_state) {
+    if (want === 'reserved' && r.stock_state === '') {
+      const short = lines.filter(l => { const p = prodOf(l.sku); return !p || atp(p) < l.qty; });
+      if (short.length) return 'Not enough stock to hold: ' + short.map(l => l.sku).join(', ');
+      lines.forEach(l => { prodOf(l.sku).reserved += l.qty; });
+    } else if (want === 'deducted' && r.stock_state === 'reserved') {
+      lines.forEach(l => { const p = prodOf(l.sku); p.on_hand -= l.qty; p.reserved = Math.max(0, p.reserved - l.qty); });
+    } else if (want === '' && r.stock_state === 'reserved') {
+      lines.forEach(l => { const p = prodOf(l.sku); p.reserved = Math.max(0, p.reserved - l.qty); });
+    }
+    r.stock_state = want;
+  }
+  const d = JSON.parse(r.status_dates); d[status] = new Date().toISOString();
+  r.status_dates = JSON.stringify(d); r.status = status;
+  return null;
 }
 
 const ACTIONS = {
@@ -142,6 +188,85 @@ const ACTIONS = {
     return { ok: true, request_id: id, total_est: total };
   },
 
+  adminOrders: () => ({ ok: true, orders: db.requests.map(orderOut).reverse(),
+    statuses: ['New','Accepted','PI Sent','PI Accepted','PO Received','In Production','Dispatched','Delivered','Closed'],
+    terminal: ['Rejected','Declined','Expired','Cancelled'], site_url: 'http://localhost:8900' }),
+  adminRequestDecide: b => {
+    const r = db.requests.find(x => x.request_id === b.id);
+    if (!r) return { ok: false, error: 'Request not found' };
+    setStatus(r, b.accept ? 'Accepted' : 'Rejected');
+    return { ok: true, status: r.status };
+  },
+  adminPiBuild: b => {
+    const r = db.requests.find(x => x.request_id === b.id);
+    if (!r) return { ok: false, error: 'Request not found' };
+    db.lines = db.lines.filter(l => l.request_id !== b.id).concat((b.lines || []).map((l, i) => ({
+      request_id: b.id, line: i + 1, sku: l.sku, name: l.name, qty: l.qty,
+      unit_price: l.unit_price, line_total: l.qty * l.unit_price,
+      list_price: l.list_price || l.unit_price, gst: l.gst, hsn: l.hsn || '' })));
+    r.pi_number = r.pi_number || 'PI-2026-' + String(++db.seq).padStart(4, '0');
+    r.pi_url = 'https://drive.google.com/file/d/mock-pi/view';
+    r.pi_total = Math.round(((b.lines || []).reduce((a, l) => a + l.qty * l.unit_price * (1 + (l.gst || 0) / 100), 0)
+      + Number(b.freight || 0) - Number(b.discount || 0)) * 100) / 100;
+    r.total_est = r.pi_total;
+    r.pi_valid_till = '20 Sep 2026';
+    if (b.send !== false) setStatus(r, 'PI Sent');
+    return { ok: true, pi_number: r.pi_number, pi_url: r.pi_url, pi_total: r.pi_total, status: r.status };
+  },
+  adminPiUpload: b => {
+    const r = db.requests.find(x => x.request_id === b.id);
+    if (!r) return { ok: false, error: 'Request not found' };
+    r.pi_number = b.pi_number || 'PI-UP-1'; r.pi_url = 'https://drive.google.com/file/d/mock-pi-up/view';
+    if (b.pi_total) { r.pi_total = b.pi_total; r.total_est = b.pi_total; }
+    if (b.send !== false) setStatus(r, 'PI Sent');
+    return { ok: true, pi_number: r.pi_number, pi_url: r.pi_url };
+  },
+  adminPoUpload: b => {
+    const r = db.requests.find(x => x.request_id === b.id);
+    if (!r) return { ok: false, error: 'Request not found' };
+    r.po_number = b.po_number || ''; r.po_url = 'https://drive.google.com/file/d/mock-po/view';
+    const e = setStatus(r, 'PO Received');
+    return e ? { ok: false, error: e } : { ok: true, po_url: r.po_url, status: r.status };
+  },
+  adminShipmentSave: b => {
+    const r = db.requests.find(x => x.request_id === b.id);
+    if (!r) return { ok: false, error: 'Request not found' };
+    const d = b.shipment || {};
+    let no = Number(d.shipment_no) || db.shipments.filter(s => s.request_id === b.id).length + 1;
+    const rec = { request_id: b.id, shipment_no: no, ship_date: d.ship_date || dstr(new Date()),
+      carrier: d.carrier || '', tracking: d.tracking || '', qty: Number(d.qty || 0),
+      note: d.note || '', status: d.status === 'Delivered' ? 'Delivered' : 'Dispatched', delivered_on: '' };
+    const i = db.shipments.findIndex(s => s.request_id === b.id && s.shipment_no === no);
+    if (i >= 0) db.shipments[i] = rec; else db.shipments.push(rec);
+    const all = db.shipments.filter(s => s.request_id === b.id);
+    setStatus(r, all.every(s => s.status === 'Delivered') ? 'Delivered' : 'Dispatched');
+    return { ok: true, shipments: all, status: r.status };
+  },
+  adminShipmentDelete: b => {
+    db.shipments = db.shipments.filter(s => !(s.request_id === b.id && s.shipment_no === Number(b.shipment_no)));
+    return { ok: true, shipments: db.shipments.filter(s => s.request_id === b.id) };
+  },
+  orderView: b => {
+    const r = db.requests.find(x => x.token === b.t);
+    if (!r) return { ok: false, error: 'This order link is not valid' };
+    return { ok: true, order: orderOut(r), site: { name: db.settings.site_name } };
+  },
+  orderPiRespond: b => {
+    const r = db.requests.find(x => x.token === b.t);
+    if (!r) return { ok: false, error: 'This order link is not valid' };
+    if (r.status !== 'PI Sent') return { ok: false, error: 'This proforma is not awaiting a decision' };
+    const e = setStatus(r, b.accept ? 'PI Accepted' : 'Declined');
+    return e ? { ok: false, error: e } : { ok: true, status: r.status };
+  },
+  orderPoUpload: b => {
+    const r = db.requests.find(x => x.token === b.t);
+    if (!r) return { ok: false, error: 'This order link is not valid' };
+    if (!['PI Accepted', 'PO Received'].includes(r.status)) return { ok: false, error: 'Accept the proforma invoice first' };
+    r.po_number = b.po_number || ''; r.po_url = 'https://drive.google.com/file/d/mock-po/view';
+    const e = setStatus(r, 'PO Received');
+    return e ? { ok: false, error: e } : { ok: true, status: r.status, po_url: r.po_url };
+  },
+  orderList: () => ({ ok: true, orders: db.requests.map(orderOut).reverse() }),
   adminUnlock: () => ({ ok: true, settings: db.settings, relay_status: db.relayStatus || null }),
   adminRequests: () => ({
     ok: true,

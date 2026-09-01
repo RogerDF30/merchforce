@@ -20,8 +20,15 @@ var SHEETS = {
   PriceTiers:   ['sku', 'min_qty', 'unit_price', 'gst'],
   Requests:     ['request_id', 'created', 'status', 'company', 'contact', 'email',
                  'phone', 'gstin', 'notes', 'user_email', 'total_est',
-                 'status_dates', 'admin_notes', 'updated'],
-  RequestLines: ['request_id', 'line', 'sku', 'name', 'qty', 'unit_price', 'line_total'],
+                 'status_dates', 'admin_notes', 'updated',
+                 // order lifecycle (appended — never reorder the columns above)
+                 'token', 'folder_id', 'stock_state',
+                 'pi_number', 'pi_url', 'pi_file_id', 'pi_total', 'pi_valid_till',
+                 'po_number', 'po_url', 'po_file_id', 'ship_address', 'place_of_supply'],
+  RequestLines: ['request_id', 'line', 'sku', 'name', 'qty', 'unit_price', 'line_total',
+                 'list_price', 'gst', 'hsn'],
+  Shipments:    ['request_id', 'shipment_no', 'ship_date', 'carrier', 'tracking',
+                 'qty', 'note', 'status', 'created', 'delivered_on'],
   Users:        ['email', 'name', 'company', 'pass_hash', 'salt', 'active',
                  'created', 'last_login'],
   Events:       ['date', 'sku', 'type', 'count'],
@@ -32,8 +39,16 @@ var SHEETS = {
 // Forward-only request lifecycle (industry standard enquiry→confirm flow).
 // Rejected/Expired are terminal branches; Confirmed reserves stock,
 // Rejected/Expired/Closed release it (see Requests.gs).
-var STATUSES = ['New', 'Under Review', 'Quoted', 'Confirmed', 'Dispatched', 'Closed'];
-var TERMINAL  = ['Rejected', 'Expired'];
+/**
+ * Order lifecycle. Stock is NOT touched by status alone — see stock_state:
+ *   PI Accepted  → reserve (ATP drops, nobody else can be promised it)
+ *   PO Received  → deduct  (on hand actually reduces)
+ * Any terminal status releases a reservation that was never deducted.
+ */
+var STATUSES = ['New', 'Accepted', 'PI Sent', 'PI Accepted', 'PO Received',
+                'In Production', 'Dispatched', 'Delivered', 'Closed'];
+var TERMINAL  = ['Rejected', 'Declined', 'Expired', 'Cancelled'];
+var ACTIVE_END = ['Delivered', 'Closed'];   // everything else open = "active order"
 
 var DEFAULT_SETTINGS = {
   site_name: 'Merchforce',
@@ -50,6 +65,12 @@ var DEFAULT_SETTINGS = {
   relay_secret: '',
   low_stock_threshold: '25',
   currency: 'INR',
+  // Who issues the proforma invoice — printed on every PI.
+  co_name: '', co_address: '', co_state: '', co_state_code: '',
+  co_gstin: '', co_pan: '', co_phone: '', co_email: '',
+  co_bank: '', co_terms: '', co_logo_url: '', co_sign_url: '',
+  pi_prefix: 'PI', pi_validity_days: '15',
+  site_url: '',   // where order.html lives, for links in emails
   primary_color: '#1a1f36',
   // Supplier stock sync: the supplier keeps managing stock in their OWN
   // Google Sheet; we pull from it (see StockSync.gs).
