@@ -41,6 +41,13 @@ var DEFAULT_SETTINGS = {
   access_mode: 'open',          // open | gated
   show_stock_numbers: 'badge',  // badge | exact
   notify_email: '',             // supplier email for new-request pings
+  // Outbound mail: 'backend' = sent by the Merchforce Google account,
+  // 'relay' = handed to a small script in the SUPPLIER'S own account so it
+  // leaves their address, on their quota (see Mail.gs).
+  mail_mode: 'backend',
+  mail_from_name: '',
+  relay_url: '',
+  relay_secret: '',
   low_stock_threshold: '25',
   currency: 'INR',
   primary_color: '#1a1f36',

@@ -2,7 +2,7 @@
 
 function fnAdminUnlock_(p) {
   audit_(p.actor || 'admin', 'admin_unlock', '', '');
-  return ok_({ settings: getSettings_() });
+  return ok_({ settings: getSettings_(), relay_status: relayStatus_() });
 }
 
 function fnAdminCatalog_(p) {
@@ -200,7 +200,7 @@ function fnAdminUserSave_(p) {
 
 function fnAdminSettings_(p) {
   if (p.save) saveSettings_(p.save);
-  return ok_({ settings: getSettings_() });
+  return ok_({ settings: getSettings_(), relay_status: relayStatus_() });
 }
 
 /** CSV export of any allowed tab (catalog backup / offline edits). */

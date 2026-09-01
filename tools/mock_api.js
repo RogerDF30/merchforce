@@ -22,7 +22,8 @@ const db = {
     site_name: 'Merchforce', tagline: 'Bulk merchandise, direct from stock',
     access_mode: 'open', show_stock_numbers: 'badge', notify_email: '',
     low_stock_threshold: '25', currency: 'INR', primary_color: '#1a1f36',
-    sync_sheet_id: '', sync_tab: '', sync_sku_col: '', sync_stock_col: '', sync_auto: 'off', sync_last: '', sync_maps: '[]'
+    sync_sheet_id: '', sync_tab: '', sync_sku_col: '', sync_stock_col: '', sync_auto: 'off', sync_last: '', sync_maps: '[]',
+    mail_mode: 'backend', mail_from_name: '', relay_url: '', relay_secret: ''
   },
   brands: seed.brands.map(b => ({ brand_id: b.id, name: b.name, logo_url: '', description: '', active: 'TRUE', sort: b.sort })),
   products: seed.products.map(p => ({
@@ -141,7 +142,7 @@ const ACTIONS = {
     return { ok: true, request_id: id, total_est: total };
   },
 
-  adminUnlock: () => ({ ok: true, settings: db.settings }),
+  adminUnlock: () => ({ ok: true, settings: db.settings, relay_status: db.relayStatus || null }),
   adminRequests: () => ({
     ok: true,
     requests: db.requests.map(r => ({
@@ -357,7 +358,13 @@ const ACTIONS = {
   adminSyncTemplate: () => ({ ok: true, url: 'https://docs.google.com/spreadsheets/d/mock-template', sheet_id: 'mock-template', name: 'Merchforce Stock Template — 31 Aug 2026' }),
   adminSyncSchedule: b => { db.settings.sync_auto = ['live5','hourly','daily'].includes(b.mode) ? b.mode : 'off'; return { ok: true, mode: db.settings.sync_auto }; },
   syncPing: b => ({ ok: true, synced: 1, touched: 2 }),
-  adminSettings: b => { if (b.save) Object.assign(db.settings, b.save); return { ok: true, settings: db.settings }; },
+  adminSettings: b => { if (b.save) Object.assign(db.settings, b.save); return { ok: true, settings: db.settings, relay_status: db.relayStatus || null }; },
+  adminMailTest: () => {
+    const relay = db.settings.mail_mode === 'relay' && db.settings.relay_url && db.settings.relay_secret;
+    db.relayStatus = relay ? { ts: new Date().toString(), ok: true, remaining: 96 } : db.relayStatus || null;
+    return { ok: true, to: db.settings.notify_email || 'you@company.com',
+             via: relay ? 'relay' : 'backend', status: db.relayStatus };
+  },
   adminExportCsv: b => ({ ok: true, filename: 'mock.csv', csv: 'sku,name\n' + db.products.map(p => p.sku + ',' + JSON.stringify(p.name)).join('\n') })
 };
 

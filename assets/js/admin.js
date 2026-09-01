@@ -68,6 +68,7 @@ function unlock() {
   $('lockErr').textContent = '';
   api('adminUnlock').then(function (res) {
     A.settings = res.settings;
+    A.relayStatus = res.relay_status || null;
     $('lock').hidden = true;
     $('console').hidden = false;
     loadRequests();
@@ -700,25 +701,147 @@ function renderSettings() {
       '<div class="card-block"><h3>Operations</h3>' +
         '<div class="field"><label>New-request notification email</label><input id="sNotify" value="' + esc(s.notify_email) + '" placeholder="you@company.com"></div>' +
         '<div class="field"><label>Low-stock badge threshold (ATP ≤)</label><input id="sLow" type="number" value="' + esc(s.low_stock_threshold) + '"></div>' +
+        '<div class="field"><label>Sender name on notifications</label><input id="sFromName" value="' + esc(s.mail_from_name) + '" placeholder="' + esc(s.site_name) + '"></div>' +
       '</div>' +
     '</div>' +
     '<div class="form-err" id="sErr"></div>' +
     '<button class="btn primary" id="sSave" style="margin:14px 0 10px">Save settings</button>' +
-    renderSyncCard(s);
+    renderMailCard(s) + renderSyncCard(s);
 
   $('sSave').onclick = function () {
     $('sSave').disabled = true;
     api('adminSettings', { save: {
       site_name: $('sName').value.trim(), tagline: $('sTag').value.trim(),
       access_mode: $('sMode').value, show_stock_numbers: $('sStock').value,
-      notify_email: $('sNotify').value.trim(), low_stock_threshold: $('sLow').value
+      notify_email: $('sNotify').value.trim(), low_stock_threshold: $('sLow').value,
+      mail_from_name: $('sFromName').value.trim()
     } }).then(function (res) {
       A.settings = res.settings;
       $('sSave').disabled = false;
       toast('Settings saved — live on the storefront now');
     }).catch(function (e) { $('sErr').textContent = e.message; $('sSave').disabled = false; });
   };
+  wireMailCard();
   wireSyncCard();
+}
+
+/* Where notification email is sent from: our account, or the supplier's. */
+function renderMailCard(s) {
+  var relay = s.mail_mode === 'relay';
+  var st = A.relayStatus;
+  var stTxt = !st ? 'No relay send recorded yet.'
+    : st.ok
+      ? 'Last relay send ' + esc(String(st.ts).slice(4, 21)) + ' — delivered' +
+        (st.remaining === null || st.remaining === undefined ? '' : ' · ' + st.remaining + ' left in their daily quota today')
+      : '<span style="color:var(--bad)">Last relay send failed: ' + esc(st.error || '') + '</span> — that message went out from the Merchforce account instead.';
+  return section('Notification email',
+      'Who the supplier\'s notifications appear to come from. Sending through their own account needs a small relay script in their Google account — no password or token is shared with us.') +
+    '<div class="panel2">' +
+      '<div class="field"><label>Send from</label><select id="wMode">' +
+        '<option value="backend"' + (relay ? '' : ' selected') + '>The Merchforce account (replies go to the buyer)</option>' +
+        '<option value="relay"' + (relay ? ' selected' : '') + '>The supplier\'s own address (via their relay)</option>' +
+      '</select></div>' +
+      '<div id="wRelayBox"' + (relay ? '' : ' hidden') + '>' +
+        '<div class="field"><label>Relay web-app URL</label><input id="wUrl" value="' + esc(s.relay_url) + '" placeholder="https://script.google.com/macros/s/…/exec"></div>' +
+        '<div class="field"><label>Shared secret</label>' +
+          '<div style="display:flex;gap:8px"><input id="wSecret" value="' + esc(s.relay_secret) + '" placeholder="click Generate">' +
+          '<button class="btn small" id="wGen" style="flex:none">Generate</button></div></div>' +
+        '<p class="note" style="margin:0 0 10px">' + esc(stTxt).replace(/&lt;/g, '<').replace(/&gt;/g, '>') + '</p>' +
+      '</div>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">' +
+        '<button class="btn primary small" id="wSave">Save mail settings</button>' +
+        '<button class="btn small" id="wScript">Get relay script</button>' +
+        '<button class="btn small" id="wTest">Send test email</button>' +
+        '<span id="wOut" style="font-size:13px;color:var(--ink-3)"></span>' +
+      '</div>' +
+    '</div>';
+}
+
+function wireMailCard() {
+  $('wMode').onchange = function () { $('wRelayBox').hidden = this.value !== 'relay'; };
+  $('wGen').onclick = function () {
+    var a = new Uint8Array(16);
+    (window.crypto || window.msCrypto).getRandomValues(a);
+    $('wSecret').value = 'mfr_' + Array.prototype.map.call(a, function (x) {
+      return ('0' + x.toString(16)).slice(-2);
+    }).join('');
+  };
+  $('wSave').onclick = function () {
+    if ($('wMode').value === 'relay' && (!$('wUrl').value.trim() || !$('wSecret').value.trim())) {
+      $('wOut').innerHTML = '<span style="color:var(--bad)">Relay needs both the URL and the secret.</span>';
+      return;
+    }
+    $('wSave').disabled = true;
+    api('adminSettings', { save: {
+      mail_mode: $('wMode').value,
+      relay_url: $('wUrl') ? $('wUrl').value.trim() : '',
+      relay_secret: $('wSecret') ? $('wSecret').value.trim() : ''
+    } }).then(function (res) {
+      A.settings = res.settings;
+      A.relayStatus = res.relay_status || null;
+      $('wSave').disabled = false;
+      toast('Mail settings saved');
+      renderSettings();
+    }).catch(function (e) { $('wOut').textContent = e.message; $('wSave').disabled = false; });
+  };
+  $('wTest').onclick = function () {
+    $('wOut').textContent = 'Sending…';
+    api('adminMailTest', {}).then(function (res) {
+      A.relayStatus = res.status || A.relayStatus;
+      $('wOut').innerHTML = 'Sent to ' + esc(res.to) + ' via <b>' + esc(res.via) + '</b>';
+    }).catch(function (e) { $('wOut').innerHTML = '<span style="color:var(--bad)">' + esc(e.message) + '</span>'; });
+  };
+  $('wScript').onclick = openRelayScript;
+}
+
+/* The relay: a standalone Apps Script the supplier deploys in their own account. */
+function openRelayScript() {
+  var secret = ($('wSecret') && $('wSecret').value.trim()) || '(click Generate first)';
+  var code =
+"/** Merchforce mail relay — sends Merchforce notifications from THIS account. */\n" +
+"var RELAY_SECRET = '" + secret + "';\n" +
+"\n" +
+"function doPost(e) {\n" +
+"  var reply = function (o) {\n" +
+"    return ContentService.createTextOutput(JSON.stringify(o))\n" +
+"      .setMimeType(ContentService.MimeType.JSON);\n" +
+"  };\n" +
+"  var p;\n" +
+"  try { p = JSON.parse(e.postData.contents); }\n" +
+"  catch (err) { return reply({ ok: false, error: 'Bad JSON' }); }\n" +
+"  if (String(p.secret) !== RELAY_SECRET) return reply({ ok: false, error: 'Bad secret' });\n" +
+"  if (!p.to || !p.subject) return reply({ ok: false, error: 'to and subject required' });\n" +
+"  try {\n" +
+"    MailApp.sendEmail({\n" +
+"      to: String(p.to),\n" +
+"      subject: String(p.subject),\n" +
+"      body: String(p.body || ''),\n" +
+"      name: p.name ? String(p.name) : undefined,\n" +
+"      replyTo: p.replyTo ? String(p.replyTo) : undefined\n" +
+"    });\n" +
+"    return reply({ ok: true, remaining: MailApp.getRemainingDailyQuota() });\n" +
+"  } catch (err) {\n" +
+"    return reply({ ok: false, error: String(err) });\n" +
+"  }\n" +
+"}";
+  openDrawer(
+    '<h2 style="margin:0 0 4px">Mail relay — send from the supplier\'s own address</h2>' +
+    '<p class="note" style="margin:0 0 14px">This script lives in the <b>supplier\'s</b> Google account. Merchforce posts the message to it and their account does the sending, so the mail leaves their address on their own quota (100 recipients a day on a personal Gmail, 1,500 on Workspace). No password or token of theirs is shared with us, and deleting the deployment revokes it instantly.</p>' +
+    '<ol style="margin:0 0 14px;padding-left:20px;font-size:14px;line-height:1.7">' +
+      '<li>They open <b>script.google.com</b> → <b>New project</b> and paste the script below.</li>' +
+      '<li><b>Deploy → New deployment → Web app</b>; "Execute as" <b>Me</b>, "Who has access" <b>Anyone</b>, then authorize.</li>' +
+      '<li>They send you the <b>/exec</b> URL; paste it into the Relay web-app URL field with this same secret.</li>' +
+      '<li>Hit <b>Send test email</b> to confirm it arrives from their address.</li>' +
+    '</ol>' +
+    '<p class="note">"Anyone" access is needed so our server can reach it — the shared secret is what authorizes each message, and the script can only send mail, nothing else. If the relay ever fails, Merchforce falls back to sending from its own account so nothing is lost.</p>' +
+    '<textarea id="lsCode" readonly style="width:100%;height:300px;font-family:ui-monospace,monospace;font-size:12px;border:1px solid var(--line);border-radius:10px;padding:12px;white-space:pre"></textarea>' +
+    '<button class="btn primary" id="lsCopy" style="width:100%;justify-content:center;margin-top:10px">Copy script</button>');
+  $('lsCode').value = code;
+  $('lsCopy').onclick = function () {
+    $('lsCode').select();
+    try { navigator.clipboard.writeText(code); } catch (e) { document.execCommand('copy'); }
+    toast('Copied — the supplier pastes this into a new Apps Script project');
+  };
 }
 
 var SYNC_FIELDS = [
@@ -824,6 +947,7 @@ function brandNameSafe(id) {
 function refreshSettings_() {
   return api('adminSettings', {}).then(function (res) {
     A.settings = res.settings;
+    A.relayStatus = res.relay_status || A.relayStatus;
     renderSettings();
   });
 }

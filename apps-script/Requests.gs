@@ -63,7 +63,8 @@ function notifyNewRequest_(id, p, lines, total) {
       lines.map(function (l) { return l.sku + '  ' + l.name + '  x' + l.qty + '  @' + l.price; }).join('\n') +
       '\n\nEstimated total: ' + total + '\nNotes: ' + (p.notes || '-') +
       '\n\nOpen the admin console to review.';
-    MailApp.sendEmail(to, '[Merchforce] New request ' + id + ' — ' + p.company, body);
+    sendMail_(to, '[' + (getSettings_().site_name || APP_NAME) + '] New request ' + id + ' — ' + p.company,
+              body, { replyTo: p.email });
   } catch (e) { audit_('system', 'mail_fail', id, String(e)); }
 }
 
