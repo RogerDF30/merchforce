@@ -668,7 +668,7 @@ function editBrand(b) {
     '<div class="field"><label>Name *</label><input id="bName" value="' + esc(b.name) + '"></div>' +
     '<div class="field"><label>Description</label><input id="bDesc" value="' + esc(b.desc) + '"></div>' +
     '<div class="field"><label>Logo</label>' +
-      '<div id="bLogoPrev" style="margin-bottom:8px">' + (b.logo ? '<img src="' + esc(b.logo) + '" style="width:56px;height:56px;border-radius:999px;object-fit:cover">' : '') + '</div>' +
+      '<div id="bLogoPrev" style="margin-bottom:8px">' + (b.logo ? '<img src="' + esc(b.logo) + '" style="height:56px;max-width:160px;object-fit:contain">' : '') + '</div>' +
       '<input id="bFile" type="file" accept="image/*"></div>' +
     '<div class="f2">' +
       '<div class="field"><label>Sort order</label><input id="bSort" type="number" value="' + b.sort + '"></div>' +
@@ -679,20 +679,30 @@ function editBrand(b) {
       (isNew ? '' : '<button class="btn danger" id="bDel">Delete</button>') +
       '<button class="btn primary" id="bSave" style="flex:1;justify-content:center">Save brand</button>' +
     '</div>');
-  var logo = b.logo;
+  var logo = b.logo, uploading = false;
   $('bFile').onchange = function () {
     var f = this.files[0];
     if (!f) return;
     var rd = new FileReader();
     rd.onload = function () {
+      // The upload only puts the file in Drive — the URL reaches the Brands row
+      // when Save is pressed, so block Save until we actually hold that URL.
+      uploading = true;
+      $('bSave').disabled = true;
       $('mErr').textContent = 'Uploading logo…';
       api('adminImageUpload', { data: rd.result, filename: 'brand-' + f.name, mime: f.type })
         .then(function (res) {
           logo = res.url;
-          $('bLogoPrev').innerHTML = '<img src="' + esc(logo) + '" style="width:56px;height:56px;border-radius:999px;object-fit:cover">';
-          $('mErr').textContent = '';
+          uploading = false;
+          $('bSave').disabled = false;
+          $('bLogoPrev').innerHTML = '<img src="' + esc(logo) + '" style="height:56px;max-width:160px;object-fit:contain">';
+          $('mErr').textContent = 'Logo uploaded — press Save brand to keep it.';
         })
-        .catch(function (e) { $('mErr').textContent = e.message; });
+        .catch(function (e) {
+          uploading = false;
+          $('bSave').disabled = false;
+          $('mErr').textContent = e.message;
+        });
     };
     rd.readAsDataURL(f);
   };
@@ -704,6 +714,7 @@ function editBrand(b) {
     };
   }
   $('bSave').onclick = function () {
+    if (uploading) { $('mErr').textContent = 'Logo is still uploading — one moment.'; return; }
     api('adminBrandSave', { brand: { id: b.id, name: $('bName').value.trim(), desc: $('bDesc').value.trim(), logo: logo, sort: Number($('bSort').value), active: $('bActive').checked } })
       .then(function () { closeDrawer(); toast('Brand saved'); loadCatalog(); })
       .catch(function (e) { $('mErr').textContent = e.message; });

@@ -94,6 +94,16 @@ a { color: var(--accent); text-decoration: none; }
   display: grid; place-items: center;
 }
 .brand-chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+/* Logo chips: show the whole mark, never a cropped circle. */
+.brand-chip.has-logo { padding: 6px 14px; }
+.brand-chip.has-logo img {
+  width: auto; height: 22px; max-width: 104px; border-radius: 0;
+  object-fit: contain; background: transparent; display: block;
+}
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
 
 /* ---------- filters ---------- */
 .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 18px 0 6px; }

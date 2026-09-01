@@ -146,10 +146,15 @@ function renderBrandBar() {
   all.onclick = function () { S.brand = ''; syncBrandBar(); render(); };
   bar.appendChild(all);
   S.brands.forEach(function (b) {
-    var icon = b.logo
-      ? '<img src="' + esc(b.logo) + '" alt="">'
-      : '<span class="brand-dot">' + esc(b.name.charAt(0)) + '</span>';
-    var c = el('button', 'brand-chip' + (S.brand === b.id ? ' on' : ''), icon + ' ' + esc(b.name));
+    // With a logo the mark stands alone — the name stays for screen readers
+    // and as a tooltip, so the chip is still identifiable without images.
+    var c = b.logo
+      ? el('button', 'brand-chip has-logo' + (S.brand === b.id ? ' on' : ''),
+           '<img src="' + esc(b.logo) + '" alt="' + esc(b.name) + '">' +
+           '<span class="sr-only">' + esc(b.name) + '</span>')
+      : el('button', 'brand-chip' + (S.brand === b.id ? ' on' : ''),
+           '<span class="brand-dot">' + esc(b.name.charAt(0)) + '</span> ' + esc(b.name));
+    if (b.logo) c.title = b.name;
     c.dataset.id = b.id;
     c.onclick = function () {
       S.brand = (S.brand === b.id) ? '' : b.id;
