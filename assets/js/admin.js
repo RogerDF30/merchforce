@@ -10,7 +10,7 @@ var CONFIG = {
 
 // Bumped with every frontend cache-buster. Shown on the lock screen so a
 // stale bundle is visible at a glance instead of being mistaken for a bug.
-var BUILD = 'v17';
+var BUILD = 'v18';
 
 var A = {
   key: '', settings: null,
@@ -669,7 +669,7 @@ function renderBrands() {
     tr.className = 'click';
     tr.innerHTML =
       '<td>' + (b.logo ? '<span class="brand-thumb"><img src="' + esc(b.logo) + '" alt=""></span>' :
-        '<span class="brand-thumb empty">' + esc(b.name.charAt(0)) + '</span>') + '</td>' +
+        '<span class="brand-thumb no-logo">' + esc(b.name.charAt(0)) + '</span>') + '</td>' +
       '<td><b>' + esc(b.name) + '</b><br><small style="color:var(--ink-3)">' + esc(b.desc || '') + '</small></td>' +
       '<td class="num">' + count + '</td><td>' + (b.active ? '✓' : '—') + '</td><td class="num">' + b.sort + '</td>';
     tr.onclick = function () { editBrand(b); };
@@ -713,7 +713,7 @@ function editBrand(b) {
     $('bLogoPrev').innerHTML = logo
       ? '<img src="' + esc(logo) + '" alt="">'
       : '<span class="logo-none">No logo</span>';
-    $('bLogoPrev').className = 'logo-prev' + (logo ? '' : ' empty');
+    $('bLogoPrev').className = 'logo-prev' + (logo ? '' : ' no-logo');
     $('bPick').textContent = logo ? 'Replace image' : 'Choose image';
     $('bClear').hidden = !logo;
     $('bLogoName').textContent = logo

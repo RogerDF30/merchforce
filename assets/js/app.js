@@ -12,6 +12,7 @@ var CONFIG = {
 var S = {
   site: null, brands: [], categories: [], products: [],
   brand: '', cat: '', sub: '', stock: '', sort: '', budget: '', q: '',
+  page: 1,
   cart: [], session: null, user: null,
   trackQueue: [], viewed: {}
 };
@@ -203,17 +204,32 @@ function filtered() {
   return list;
 }
 
-function render() {
+var PER_PAGE = 24;
+
+/**
+ * keepPage is passed only by the pager itself. Every other caller — a filter,
+ * a search, a brand chip, a sort — leaves it out and so returns to page 1,
+ * which is the only sane place to land when the result set changes.
+ */
+function render(keepPage) {
   var list = filtered();
-  $('resCount').textContent = list.length + ' product' + (list.length === 1 ? '' : 's');
+  if (!keepPage) S.page = 1;
+  var pages = Math.max(1, Math.ceil(list.length / PER_PAGE));
+  if (S.page > pages) S.page = pages;
+  var from = (S.page - 1) * PER_PAGE;
+  var shown = list.slice(from, from + PER_PAGE);
+
+  $('resCount').textContent = list.length + ' product' + (list.length === 1 ? '' : 's') +
+    (pages > 1 ? ' · showing ' + (from + 1) + '–' + (from + shown.length) : '');
   renderActiveChips();
   var grid = $('grid');
   grid.innerHTML = '';
   if (!list.length) {
     grid.appendChild(el('div', 'empty', 'No products match these filters'));
+    renderPager(0, 1);
     return;
   }
-  list.forEach(function (p) {
+  shown.forEach(function (p) {
     var c = el('article', 'card');
     c.innerHTML =
       '<div class="ph">' + (p.images[0]
@@ -231,6 +247,50 @@ function render() {
     c.onclick = function () { openProduct(p); };
     grid.appendChild(c);
   });
+  renderPager(list.length, pages);
+}
+
+/** Windowed pager: first and last are always reachable, current sits in a run of neighbours. */
+function renderPager(total, pages) {
+  var box = $('pager');
+  box.innerHTML = '';
+  box.hidden = pages < 2;
+  if (pages < 2) return;
+
+  function go(n) {
+    return function () {
+      S.page = n;
+      render(true);
+      var top = $('grid').getBoundingClientRect().top + window.pageYOffset - 90;
+      window.scrollTo({ top: top, behavior: 'smooth' });
+    };
+  }
+  function btn(label, n, opts) {
+    opts = opts || {};
+    var b = el('button', opts.on ? 'on' : '', label);
+    if (opts.disabled) b.disabled = true; else if (!opts.on) b.onclick = go(n);
+    if (opts.label) b.setAttribute('aria-label', opts.label);
+    if (opts.on) b.setAttribute('aria-current', 'page');
+    box.appendChild(b);
+  }
+
+  btn('‹', S.page - 1, { disabled: S.page === 1, label: 'Previous page' });
+
+  var nums = [];
+  for (var i = 1; i <= pages; i++) {
+    if (i === 1 || i === pages || Math.abs(i - S.page) <= 1) nums.push(i);
+  }
+  var prev = 0;
+  nums.forEach(function (n) {
+    // A gap of exactly one is silly to hide behind an ellipsis — show the page.
+    if (prev && n - prev === 2) btn(String(prev + 1), prev + 1, {});
+    else if (prev && n - prev > 2) box.appendChild(el('span', 'gap', '…'));
+    btn(String(n), n, { on: n === S.page });
+    prev = n;
+  });
+
+  btn('›', S.page + 1, { disabled: S.page === pages, label: 'Next page' });
+  box.appendChild(el('span', 'of', 'Page ' + S.page + ' of ' + pages + ' · ' + total + ' products'));
 }
 
 function renderActiveChips() {
