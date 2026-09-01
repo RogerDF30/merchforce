@@ -263,6 +263,7 @@ function openQuoteBuilder(r) {
     '<h2 style="margin:0 0 4px">Quotation for ' + esc(r.id) + '</h2>' +
     '<p class="note" style="margin:0 0 14px">Edit quantities and unit prices freely — the negotiated price replaces the catalog price on this order. The PI is generated as a PDF into the order folder and emailed to the client with Accept / Decline.</p>' +
     '<div id="qLines"></div>' +
+    '<div id="qHsnWarn" class="note" style="color:var(--bad);margin:-2px 0 10px" hidden></div>' +
     '<div class="f2" style="margin-top:12px">' +
       '<div class="field"><label>Freight / handling ₹</label><input id="qFreight" type="number" min="0" value="0"></div>' +
       '<div class="field"><label>Discount ₹</label><input id="qDisc" type="number" min="0" value="0"></div>' +
@@ -284,6 +285,14 @@ function openQuoteBuilder(r) {
       return a + amt + amt * Number(l.gst || 0) / 100;
     }, 0) + Number($('qFreight').value || 0) - Number($('qDisc').value || 0);
     $('qTotal').textContent = inr(Math.round(t * 100) / 100);
+    // HSN is mandatory on a GST invoice — flag anything the product master could not fill.
+    var missing = draft.filter(function (l) { return !String(l.hsn || '').trim(); })
+                       .map(function (l) { return l.sku; });
+    var w = $('qHsnWarn');
+    w.hidden = !missing.length;
+    w.textContent = missing.length
+      ? 'No HSN code on ' + missing.join(', ') + ' — set it on the product so every future quotation fills it in.'
+      : '';
   }
   function paint() {
     $('qLines').innerHTML = draft.map(function (l, i) {
@@ -471,7 +480,7 @@ function paintCatalogRows() {
 function editProduct(p) {
   var isNew = !p;
   p = p || { sku: '', name: '', brand_id: '', category: '', subcategory: '', description: '', specs: '',
-             images: [], moq: 1, gst_rate: 18, mrp: '', lead_time: '', on_hand: 0, reserved: 0,
+             images: [], moq: 1, gst_rate: 18, hsn: '', mrp: '', lead_time: '', on_hand: 0, reserved: 0,
              safety_stock: 0, reorder_point: 0, visible: true, show_price: true,
              tiers: [{ min: 1, price: 0, gst: '' }] };
   var draft = JSON.parse(JSON.stringify(p));
@@ -499,6 +508,7 @@ function editProduct(p) {
     '<div class="f2">' +
       '<div class="field"><label>MOQ (1 = no minimum)</label><input id="eMoq" type="number" min="1" value="' + draft.moq + '"></div>' +
       '<div class="field"><label>Product GST %</label><input id="eGst" type="number" min="0" step="0.01" value="' + draft.gst_rate + '"></div>' +
+      '<div class="field"><label>HSN code</label><input id="eHsn" value="' + esc(p.hsn || '') + '" placeholder="e.g. 9617" maxlength="8"></div>' +
       '<div class="field"><label>MRP ₹ (shown struck through)</label><input id="eMrp" type="number" min="0" value="' + (p.mrp || '') + '"></div>' +
       '<div class="field"><label>Lead time</label><input id="eLead" value="' + esc(p.lead_time) + '"></div>' +
       '<div class="field"><label>On hand</label><input id="eOnHand" type="number" value="' + p.on_hand + '"></div>' +
@@ -602,7 +612,8 @@ function editProduct(p) {
       description: $('eDesc').value.trim(),
       specs: $('eSpecs').value.split('\n').map(function (s) { return s.trim(); }).filter(String).join('|'),
       images: images,
-      moq: moq, gst_rate: Number($('eGst').value), mrp: Number($('eMrp').value) || '', lead_time: $('eLead').value.trim(),
+      moq: moq, gst_rate: Number($('eGst').value), hsn: $('eHsn').value.trim(),
+      mrp: Number($('eMrp').value) || '', lead_time: $('eLead').value.trim(),
       on_hand: Number($('eOnHand').value), safety_stock: Number($('eSafety').value),
       reorder_point: Number($('eReorder').value),
       visible: $('eVisible').checked, show_price: $('eShowPrice').checked,
@@ -1074,6 +1085,7 @@ var SYNC_FIELDS = [
   ['mrp', 'MRP'],
   ['moq', 'MOQ'],
   ['gst_rate', 'GST %'],
+  ['hsn', 'HSN code'],
   ['name', 'Product name'],
   ['lead_time', 'Lead time'],
   ['description', 'Description'],
@@ -1200,7 +1212,7 @@ function wireSyncCard() {
     $('yTplOut').textContent = 'Building the template sheet…';
     api('adminSyncTemplate', {}).then(function (res) {
       $('yTemplate').disabled = false;
-      $('yTplOut').innerHTML = 'Template ready: <a href="' + esc(res.url) + '" target="_blank">' + esc(res.name) + ' ↗</a> — one tab per brand, in the supplier\'s format (Code · Product Name · MRP · Selling Price Excluding GST · Stock). Ask the supplier to File → Make a copy and maintain theirs.';
+      $('yTplOut').innerHTML = 'Template ready: <a href="' + esc(res.url) + '" target="_blank">' + esc(res.name) + ' ↗</a> — one tab per brand, in the supplier\'s format (Code · Product Name · HSN · GST % · MRP · Selling Price Excluding GST · Stock). Ask the supplier to File → Make a copy and maintain theirs.';
     }).catch(function (e) { $('yTemplate').disabled = false; $('yTplOut').textContent = e.message; });
   };
   $('yLive').onclick = openLiveSyncHelp;
@@ -1418,7 +1430,7 @@ function openMapEditor(m, index) {
 
   var GUESS = { on_hand: ['stock', 'qty', 'quantity', 'on hand', 'available'],
                 price: ['selling', 'dp ', 'price'], mrp: ['mrp'], name: ['name', 'product'],
-                moq: ['moq'], gst_rate: ['gst'], lead_time: ['lead'], description: ['desc'],
+                moq: ['moq'], gst_rate: ['gst'], hsn: ['hsn'], lead_time: ['lead'], description: ['desc'],
                 category: ['category'], subcategory: ['subcat'] };
   function guessSource(src) {
     var hs = headersFor(src.tab);

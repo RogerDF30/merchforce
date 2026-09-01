@@ -19,6 +19,7 @@ var SYNC_FIELDS = {
   mrp:       { label: 'MRP', numeric: true },
   moq:       { label: 'MOQ', numeric: true },
   gst_rate:  { label: 'GST %', numeric: true },
+  hsn:       { label: 'HSN code' },
   name:      { label: 'Product name' },
   lead_time: { label: 'Lead time' },
   description: { label: 'Description' },
@@ -357,7 +358,7 @@ function applySyncData_(map, tabData, actor) {
             lead_time: v.lead_time || '', on_hand: v.on_hand || 0, reserved: 0,
             safety_stock: 0, reorder_point: 0,
             visible: 'FALSE', show_price: 'TRUE', created: now_(), updated: now_(),
-            mrp: v.mrp || ''
+            mrp: v.mrp || '', hsn: v.hsn || ''
           });
           if (v.price) {
             appendRecord_('PriceTiers', { sku: String(inc.sku).toUpperCase(), min_qty: moq, unit_price: v.price, gst: '' });
@@ -517,11 +518,12 @@ function fnAdminSyncTemplate_(p) {
     if (!cur || toNum_(t.min_qty) < cur.min) firstTier[t.sku] = { min: toNum_(t.min_qty), price: toNum_(t.unit_price) };
   });
 
-  var HEADERS = ['Code', 'Product Name', 'MRP', 'Selling Price Excluding GST', 'Stock'];
+  var HEADERS = ['Code', 'Product Name', 'HSN', 'GST %', 'MRP', 'Selling Price Excluding GST', 'Stock'];
   brands.forEach(function (b) {
     var rows = products.filter(function (pr) { return pr.brand_id === b.brand_id; })
       .map(function (pr) {
-        return [pr.sku, pr.name, toNum_(pr.mrp) || '',
+        return [pr.sku, pr.name, String(pr.hsn || ''), toNum_(pr.gst_rate) || '',
+                toNum_(pr.mrp) || '',
                 firstTier[pr.sku] ? firstTier[pr.sku].price : '', toNum_(pr.on_hand)];
       });
     var sh = ss.insertSheet(b.name);

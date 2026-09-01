@@ -30,7 +30,8 @@ function fnRequestSubmit_(p) {
     (tiers[skuKey_(ln.sku)] || []).sort(function (a, b) { return a.min - b.min; })
       .forEach(function (t) { if (qty >= t.min) price = t.price; });
     cleaned.push({ sku: String(ln.sku), name: pr.name, qty: qty, price: price,
-                   total: qty * price, gst: toNum_(pr.gst_rate) });
+                   total: qty * price, gst: toNum_(pr.gst_rate),
+                   hsn: String(pr.hsn || '') });
   }
 
   var id = nextRequestId_();
@@ -48,7 +49,7 @@ function fnRequestSubmit_(p) {
     appendRecord_('RequestLines', {
       request_id: id, line: idx + 1, sku: l.sku, name: l.name,
       qty: l.qty, unit_price: l.price, line_total: l.total,
-      list_price: l.price, gst: l.gst, hsn: ''
+      list_price: l.price, gst: l.gst, hsn: l.hsn || ''
     });
   });
   fnTrack_({ events: cleaned.map(function (l) { return { sku: l.sku, type: 'request' }; }) });

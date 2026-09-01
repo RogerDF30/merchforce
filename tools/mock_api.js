@@ -29,7 +29,7 @@ const db = {
   products: seed.products.map(p => ({
     sku: p.sku, name: p.name, brand_id: p.brand_id, category: p.category,
     subcategory: p.sub || '', description: p.desc, specs: (p.specs || []).join('|'),
-    image_urls: p.image || '', moq: p.moq, gst_rate: 18, mrp: p.mrp || '', lead_time: p.lead,
+    image_urls: p.image || '', moq: p.moq, gst_rate: 18, hsn: p.hsn || '', mrp: p.mrp || '', lead_time: p.lead,
     on_hand: p.stock, reserved: 0, safety_stock: Math.round(p.stock * 0.03),
     reorder_point: Math.round(p.stock * 0.1), visible: 'TRUE', show_price: 'TRUE'
   })),
@@ -114,7 +114,8 @@ function orderOut(r) {
     folder_id: r.folder_id || '', stock_state: r.stock_state || '', place_of_supply: r.place_of_supply || '',
     lines: db.lines.filter(l => l.request_id === r.request_id).map(l => ({
       sku: l.sku, name: l.name, qty: l.qty, unit_price: l.unit_price, line_total: l.line_total,
-      list_price: l.list_price || null, gst: l.gst || 0, hsn: l.hsn || '' })),
+      list_price: l.list_price || null, gst: l.gst || 0,
+      hsn: l.hsn || (prodOf(l.sku) || {}).hsn || '' })),
     shipments: db.shipments.filter(s => s.request_id === r.request_id).map(s => ({
       no: s.shipment_no, date: s.ship_date, carrier: s.carrier, tracking: s.tracking,
       qty: s.qty, note: s.note, status: s.status, delivered_on: s.delivered_on })),
@@ -177,7 +178,8 @@ const ACTIONS = {
       if (!p) return;
       const price = tierFor(l.sku, l.qty);
       total += price * l.qty;
-      db.lines.push({ request_id: id, line: i + 1, sku: l.sku, name: p.name, qty: l.qty, unit_price: price, line_total: price * l.qty });
+      db.lines.push({ request_id: id, line: i + 1, sku: l.sku, name: p.name, qty: l.qty, unit_price: price,
+        line_total: price * l.qty, list_price: price, gst: p.gst_rate, hsn: p.hsn || '' });
     });
     db.requests.push({
       request_id: id, created: new Date().toISOString(), status: 'New', company: b.company,
@@ -203,7 +205,8 @@ const ACTIONS = {
     db.lines = db.lines.filter(l => l.request_id !== b.id).concat((b.lines || []).map((l, i) => ({
       request_id: b.id, line: i + 1, sku: l.sku, name: l.name, qty: l.qty,
       unit_price: l.unit_price, line_total: l.qty * l.unit_price,
-      list_price: l.list_price || l.unit_price, gst: l.gst, hsn: l.hsn || '' })));
+      list_price: l.list_price || l.unit_price, gst: l.gst,
+      hsn: l.hsn || (prodOf(l.sku) || {}).hsn || '' })));
     r.pi_number = r.pi_number || 'PI-2026-' + String(++db.seq).padStart(4, '0');
     r.pi_url = 'https://drive.google.com/file/d/mock-pi/view';
     r.pi_total = Math.round(((b.lines || []).reduce((a, l) => a + l.qty * l.unit_price * (1 + (l.gst || 0) / 100), 0)
@@ -305,7 +308,7 @@ const ACTIONS = {
     products: db.products.map(p => ({
       sku: p.sku, name: p.name, brand_id: p.brand_id, category: p.category, subcategory: p.subcategory,
       description: p.description, specs: p.specs, images: p.image_urls.split('|').filter(Boolean),
-      moq: p.moq, gst_rate: p.gst_rate, mrp: Number(p.mrp) || '', lead_time: p.lead_time, on_hand: p.on_hand, reserved: p.reserved,
+      moq: p.moq, gst_rate: p.gst_rate, hsn: p.hsn || '', mrp: Number(p.mrp) || '', lead_time: p.lead_time, on_hand: p.on_hand, reserved: p.reserved,
       safety_stock: p.safety_stock, reorder_point: p.reorder_point, atp: atp(p),
       visible: p.visible === 'TRUE', show_price: p.show_price === 'TRUE', tiers: tiersOf(p.sku)
     })),
@@ -319,7 +322,7 @@ const ACTIONS = {
     Object.assign(p, {
       name: d.name, brand_id: d.brand_id || '', category: d.category || '', subcategory: d.subcategory || '',
       description: d.description || '', specs: d.specs || '', image_urls: (d.images || []).join('|'),
-      moq: d.moq || 1, gst_rate: d.gst_rate || 0, mrp: d.mrp || '', lead_time: d.lead_time || '', on_hand: d.on_hand || 0,
+      moq: d.moq || 1, gst_rate: d.gst_rate || 0, hsn: d.hsn || '', mrp: d.mrp || '', lead_time: d.lead_time || '', on_hand: d.on_hand || 0,
       safety_stock: d.safety_stock || 0, reorder_point: d.reorder_point || 0,
       visible: d.visible ? 'TRUE' : 'FALSE', show_price: d.show_price ? 'TRUE' : 'FALSE'
     });

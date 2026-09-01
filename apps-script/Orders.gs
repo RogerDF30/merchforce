@@ -44,6 +44,23 @@ function linesOf_(id) {
   return readRows_('RequestLines').filter(function (l) { return String(l.request_id) === String(id); });
 }
 
+/**
+ * Product master lookup for tax fields, built once per execution.
+ * Order lines snapshot HSN/GST when the request is raised, but orders created
+ * before a SKU had an HSN (or before the field existed) fall back to the master
+ * so the quotation builder is never left with a blank HSN to type by hand.
+ */
+var PROD_TAX_ = null;
+function prodTax_(sku) {
+  if (!PROD_TAX_) {
+    PROD_TAX_ = {};
+    readRows_('Products').forEach(function (r) {
+      PROD_TAX_[skuKey_(r.sku)] = { hsn: String(r.hsn || ''), gst: toNum_(r.gst_rate) };
+    });
+  }
+  return PROD_TAX_[skuKey_(sku)] || { hsn: '', gst: 0 };
+}
+
 function ensureToken_(hit) {
   if (hit.rec.token) return hit.rec.token;
   hit.rec.token = randomToken_(28);
@@ -287,7 +304,7 @@ function fnAdminPiBuild_(p) {
         unit_price: toNum_(l.unit_price),
         line_total: Math.max(0, Math.floor(toNum_(l.qty))) * toNum_(l.unit_price),
         list_price: old.list_price !== undefined && old.list_price !== '' ? old.list_price : toNum_(old.unit_price),
-        gst: toNum_(l.gst), hsn: l.hsn || old.hsn || ''
+        gst: toNum_(l.gst), hsn: l.hsn || old.hsn || prodTax_(l.sku).hsn || ''
       };
     }).filter(function (l) { return l.qty > 0; });
     if (!clean.length) return err_('Every line has zero quantity');
@@ -439,7 +456,9 @@ function orderPayload_(hit, forClient) {
   var lines = linesOf_(r.request_id).map(function (l) {
     return { sku: String(l.sku), name: l.name, qty: toNum_(l.qty),
              unit_price: toNum_(l.unit_price), line_total: toNum_(l.line_total),
-             list_price: toNum_(l.list_price) || null, gst: toNum_(l.gst), hsn: l.hsn || '' };
+             list_price: toNum_(l.list_price) || null,
+             gst: (l.gst === '' || l.gst === undefined || l.gst === null) ? prodTax_(l.sku).gst : toNum_(l.gst),
+             hsn: l.hsn || prodTax_(l.sku).hsn || '' };
   });
   var out = {
     id: r.request_id, created: String(r.created), status: r.status,

@@ -16,7 +16,7 @@ var SHEETS = {
   Products:     ['sku', 'name', 'brand_id', 'category', 'subcategory', 'description',
                  'specs', 'image_urls', 'moq', 'gst_rate', 'lead_time',
                  'on_hand', 'reserved', 'safety_stock', 'reorder_point',
-                 'visible', 'show_price', 'created', 'updated', 'mrp'],
+                 'visible', 'show_price', 'created', 'updated', 'mrp', 'hsn'],
   PriceTiers:   ['sku', 'min_qty', 'unit_price', 'gst'],
   Requests:     ['request_id', 'created', 'status', 'company', 'contact', 'email',
                  'phone', 'gstin', 'notes', 'user_email', 'total_est',

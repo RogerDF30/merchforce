@@ -59,6 +59,10 @@ The frontends auto-target the mock (`/api`, token `mf-demo-token`) when served f
 
 The supplier keeps managing stock in their own Google Sheet. In Admin → Settings → Stock sync: paste the sheet link, share the sheet (Viewer) with the backend account, Load sheet, map the SKU and stock columns from its headers, then Sync now — or tick hourly auto-sync (time-driven trigger). On-hand is the only field written; reservations and safety stock stay owned by the request lifecycle. Every change lands in StockLog.
 
+## Tax fields
+
+Each product carries `gst_rate` and `hsn` on the master. Both are snapshotted onto the request lines when a buyer raises a request, so the Quotation Builder opens pre-filled and the PI prints the HSN column without retyping. Orders raised before a SKU had an HSN fall back to the product master when the order is opened. HSN is also a mappable sheet-sync field and a column in the generated supplier template.
+
 ## Pricing model
 
 Quantity price tiers per product, RSM-style: the first tier must start at the MOQ (use MOQ 1 for a flat price at any quantity). GST is held per tier, blank inherits the product rate — set it per tier only when volume pricing crosses a tax slab.
