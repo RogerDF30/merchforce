@@ -39,11 +39,23 @@ function api(action, body) {
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(body),
     redirect: 'follow'
-  }).then(function (r) { return r.json(); })
-    .then(function (res) {
-      if (!res.ok) throw new Error(res.error || 'Request failed');
-      return res;
+  }).then(function (r) {
+    // A non-JSON body means Google answered with an HTML page (auth wall,
+    // quota, outage) — surface that instead of a bare parse error.
+    return r.text().then(function (txt) {
+      try { return JSON.parse(txt); }
+      catch (e) {
+        throw new Error(action + ': server returned ' + r.status + ' ' +
+          (r.ok ? 'with a non-JSON body' : r.statusText) +
+          ' — ' + txt.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160));
+      }
     });
+  }, function (netErr) {
+    throw new Error(action + ': could not reach the backend (' + (netErr.message || netErr) + ')');
+  }).then(function (res) {
+    if (!res.ok) throw new Error(res.error || 'Request failed');
+    return res;
+  });
 }
 function statusPill(s) { return '<span class="pill st-' + esc(s).replace(/ /g, '') + '">' + esc(s) + '</span>'; }
 function fmtDate(d) {
@@ -672,13 +684,13 @@ function editBrand(b) {
         '<div id="bLogoPrev" class="logo-prev"></div>' +
         '<div class="logo-picker-side">' +
           '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-            '<button type="button" class="btn small" id="bPick">Choose image</button>' +
+            '<label class="btn small" id="bPick" for="bFile" style="cursor:pointer">Choose image</label>' +
             '<button type="button" class="btn small" id="bClear" hidden>Remove</button>' +
           '</div>' +
           '<div id="bLogoName" class="note logo-name"></div>' +
         '</div>' +
       '</div>' +
-      '<input id="bFile" type="file" accept="image/*" hidden></div>' +
+      '<input id="bFile" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" class="sr-only"></div>' +
     '<div class="f2">' +
       '<div class="field"><label>Sort order</label><input id="bSort" type="number" value="' + b.sort + '"></div>' +
       '<label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px;margin-top:20px"><input id="bActive" type="checkbox"' + (b.active ? ' checked' : '') + '> Active</label>' +
@@ -705,7 +717,6 @@ function editBrand(b) {
   }
   paintLogo();
 
-  $('bPick').onclick = function () { $('bFile').click(); };
   $('bClear').onclick = function () {
     logo = ''; logoName = '';
     paintLogo();
@@ -715,7 +726,18 @@ function editBrand(b) {
   $('bFile').onchange = function () {
     var f = this.files[0];
     if (!f) return;
+    if (f.size > 4 * 1024 * 1024) {
+      this.value = '';
+      $('mErr').textContent = 'That file is ' + (f.size / 1048576).toFixed(1) +
+        'MB — the limit is 4MB. Export it smaller and try again.';
+      paintLogo();
+      return;
+    }
     var rd = new FileReader();
+    rd.onerror = function () {
+      $('mErr').textContent = 'Could not read that file from disk.';
+      paintLogo();
+    };
     rd.onload = function () {
       // The upload only puts the file in Drive — the URL reaches the Brands row
       // when Save is pressed, so block Save until we actually hold that URL.
