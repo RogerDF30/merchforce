@@ -81,10 +81,16 @@ function fnAdminSyncPreview_(p) {
 /** Save (add or replace) one brand mapping. */
 function fnAdminSyncMapSave_(p) {
   var m = p.map || {};
+  var mode = m.mode === 'push' ? 'push' : 'pull';
   m.sheet = sheetIdFrom_(m.sheet);
   var fields = (m.fields || []).filter(function (f) { return f.col && SYNC_FIELDS[f.field]; });
-  if (!m.sheet || !m.sku_col || !fields.length) {
+  if (mode === 'pull' && (!m.sheet || !m.sku_col || !fields.length)) {
     return err_('Sheet, SKU column and at least one field mapping are required');
+  }
+  // A push mapping may be saved before the supplier's first push, when the
+  // columns are not known yet — the connector discovers them for us.
+  if (mode === 'push' && !m.brand) {
+    return err_('A push mapping must be bound to one brand');
   }
   var seen = {};
   for (var i = 0; i < fields.length; i++) {
@@ -96,10 +102,19 @@ function fnAdminSyncMapSave_(p) {
   }
   var maps = getSyncMaps_();
   var idx = toNum_(p.index);
-  var rec = { brand: m.brand || '', sheet: m.sheet, tab: m.tab || '',
-              sku_col: m.sku_col, fields: fields, create_new: !!m.create_new, last: null };
-  if (p.index !== undefined && maps[idx]) { rec.last = maps[idx].last; maps[idx] = rec; }
-  else maps.push(rec);
+  var rec = { mode: mode, brand: m.brand || '', sheet: m.sheet, tab: m.tab || '',
+              sku_col: m.sku_col || '', fields: fields, create_new: !!m.create_new,
+              push_key: '', headers: null, sample: null, last: null };
+  if (p.index !== undefined && maps[idx]) {
+    rec.last = maps[idx].last;
+    rec.push_key = maps[idx].push_key || '';
+    rec.headers = maps[idx].headers || null;
+    rec.sample = maps[idx].sample || null;
+    maps[idx] = rec;
+  } else {
+    maps.push(rec);
+  }
+  if (mode === 'push' && !rec.push_key) rec.push_key = 'mfp_' + randomToken_(24);
   saveSyncMaps_(maps);
   audit_(p.actor || 'admin', 'sync_map_save', rec.brand || 'all', rec.sheet);
   return ok_({ maps: maps });
@@ -130,16 +145,46 @@ function fnAdminSyncRun_(p) {
   return ok_({ results: results, maps: maps });
 }
 
+function emptySummary_() {
+  return { ts: String(now_()), matched: 0, updated: 0, unchanged: 0, created: 0,
+           unknown: 0, off_brand: 0, unknown_skus: [], created_skus: [], error: null };
+}
+
+/** PULL mode: Merchforce opens the supplier's sheet (needs Viewer access). */
 function runStockSync_(map, actor) {
-  var summary = { ts: String(now_()), matched: 0, updated: 0, unchanged: 0, created: 0,
-                  unknown: 0, off_brand: 0, unknown_skus: [], created_skus: [], error: null };
+  if (map.mode === 'push') {
+    var s = emptySummary_();
+    s.error = 'Push mapping — the supplier\'s sheet sends the data; nothing to pull here';
+    return s;
+  }
+  var headers, data;
   try {
-    var fields = mapFields_(map);
-    if (!fields.length) throw new Error('No field mappings — edit the mapping');
     var o = openSupplierSheet_(map.sheet, map.tab || '');
     var lastCol = o.sh.getLastColumn();
     var lastRow = o.sh.getLastRow();
-    var headers = o.sh.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+    headers = o.sh.getRange(1, 1, 1, lastCol).getValues()[0];
+    data = lastRow > 1 ? o.sh.getRange(2, 1, lastRow - 1, lastCol).getValues() : [];
+  } catch (e) {
+    var f = emptySummary_();
+    f.error = e.message || String(e);
+    audit_(actor || 'sync', 'sheet_sync', (map.brand || 'all') + ':' + map.sheet, f.error);
+    return f;
+  }
+  return applySyncRows_(map, headers, data, actor);
+}
+
+/**
+ * Shared engine: apply sheet rows to the catalog. Used by pull mode and by
+ * PUSH mode, where the connector on the supplier's own sheet POSTs the rows
+ * and Merchforce never touches (or needs access to) their file.
+ */
+function applySyncRows_(map, rawHeaders, data, actor) {
+  var summary = emptySummary_();
+  try {
+    var fields = mapFields_(map);
+    if (!fields.length) throw new Error('No field mappings — edit the mapping');
+    var headers = (rawHeaders || []).map(function (h) { return String(h).trim(); });
+    data = data || [];
     var iSku = headers.indexOf(String(map.sku_col).trim());
     if (iSku < 0) throw new Error('SKU column not found — re-map the columns');
     var fIdx = fields.map(function (f) {
@@ -314,6 +359,50 @@ function syncTick() {
   var maps = getSyncMaps_();
   maps.forEach(function (m) { m.last = runStockSync_(m, 'auto-sync'); });
   if (maps.length) saveSyncMaps_(maps);
+}
+
+/**
+ * PUSH mode — for suppliers who will NOT share their sheet.
+ * A connector installed on their own sheet (generated per mapping in the
+ * admin console) reads the rows under THEIR account and POSTs them here with
+ * the mapping's push_key. Merchforce never opens, and never needs access to,
+ * their file: only the columns they mapped ever leave it.
+ *
+ * The first push also reports the sheet's headers, so the admin can map the
+ * columns without ever seeing the sheet.
+ */
+function fnSyncPush_(p) {
+  var key = String(p.push_key || '');
+  if (!key) return err_('push_key required');
+  var maps = getSyncMaps_();
+  var idx = -1;
+  maps.forEach(function (m, i) { if (m.push_key && m.push_key === key) idx = i; });
+  if (idx < 0) return err_('Unknown push key — re-copy the connector from the admin console');
+
+  var headers = (p.headers || []).map(function (h) { return String(h).trim(); });
+  if (!headers.length) return err_('No headers received (is row 1 of that tab empty?)');
+  var rows = (p.rows || []).slice(0, 5000);
+
+  // Remember what the sheet looks like so the mapping UI can offer its columns.
+  maps[idx].headers = headers.slice(0, 30);
+  maps[idx].sample = rows.slice(0, 3).map(function (r) {
+    return r.slice(0, 30).map(function (c) { return String(c === null || c === undefined ? '' : c).slice(0, 40); });
+  });
+
+  var summary;
+  if (!mapFields_(maps[idx]).length) {
+    summary = emptySummary_();
+    summary.awaiting_mapping = true;
+    summary.error = 'Connected — now map the columns in the admin console';
+    saveSyncMaps_(maps);
+    audit_('push-sync', 'sheet_push', maps[idx].brand || '', 'awaiting mapping, ' + rows.length + ' rows');
+    return ok_({ awaiting_mapping: true, headers: headers, rows: rows.length });
+  }
+
+  summary = applySyncRows_(maps[idx], headers, rows, 'push-sync');
+  maps[idx].last = summary;
+  saveSyncMaps_(maps);
+  return ok_({ summary: summary });
 }
 
 /**

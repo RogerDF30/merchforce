@@ -288,14 +288,38 @@ const ACTIONS = {
     : { ok: false, error: 'Paste the supplier sheet link or ID' }),
   adminSyncMapSave: b => {
     const maps = JSON.parse(db.settings.sync_maps || '[]');
-    const rec = { brand: b.map.brand || '', sheet: b.map.sheet, tab: b.map.tab || '', sku_col: b.map.sku_col,
+    const mode = b.map.mode === 'push' ? 'push' : 'pull';
+    const rec = { mode, brand: b.map.brand || '', sheet: b.map.sheet, tab: b.map.tab || '', sku_col: b.map.sku_col || '',
       fields: b.map.fields || (b.map.stock_col ? [{ col: b.map.stock_col, field: 'on_hand' }] : []),
-      create_new: !!b.map.create_new, last: null };
-    if (!rec.fields.length) return { ok: false, error: 'Sheet, SKU column and at least one field mapping are required' };
+      create_new: !!b.map.create_new, push_key: '', headers: null, sample: null, last: null };
+    if (mode === 'pull' && !rec.fields.length) return { ok: false, error: 'Sheet, SKU column and at least one field mapping are required' };
+    if (mode === 'push' && !rec.brand) return { ok: false, error: 'A push mapping must be bound to one brand' };
     if (rec.create_new && !rec.brand) return { ok: false, error: 'To auto-create new products, the mapping must be bound to one brand' };
-    if (b.index !== undefined && maps[b.index]) { rec.last = maps[b.index].last; maps[b.index] = rec; } else maps.push(rec);
+    if (b.index !== undefined && maps[b.index]) {
+      rec.last = maps[b.index].last; rec.push_key = maps[b.index].push_key || '';
+      rec.headers = maps[b.index].headers || null; rec.sample = maps[b.index].sample || null;
+      maps[b.index] = rec;
+    } else maps.push(rec);
+    if (mode === 'push' && !rec.push_key) rec.push_key = 'mfp_mock' + Math.random().toString(36).slice(2, 10);
     db.settings.sync_maps = JSON.stringify(maps);
     return { ok: true, maps };
+  },
+  syncPush: b => {
+    const maps = JSON.parse(db.settings.sync_maps || '[]');
+    const i = maps.findIndex(x => x.push_key && x.push_key === b.push_key);
+    if (i < 0) return { ok: false, error: 'Unknown push key' };
+    maps[i].headers = (b.headers || []).map(String);
+    maps[i].sample = (b.rows || []).slice(0, 3);
+    const mapped = (maps[i].fields || []).length;
+    if (!mapped) {
+      maps[i].last = { ts: new Date().toString(), awaiting_mapping: true, error: 'Connected — now map the columns in the admin console', matched: 0, updated: 0, unchanged: 0, created: 0, unknown: 0, off_brand: 0, unknown_skus: [], created_skus: [] };
+      db.settings.sync_maps = JSON.stringify(maps);
+      return { ok: true, awaiting_mapping: true, headers: maps[i].headers, rows: (b.rows || []).length };
+    }
+    const summary = { ts: new Date().toString(), matched: 3, updated: 1, unchanged: 2, created: 0, unknown: 0, off_brand: 0, unknown_skus: [], created_skus: [], error: null };
+    maps[i].last = summary;
+    db.settings.sync_maps = JSON.stringify(maps);
+    return { ok: true, summary };
   },
   adminSyncMapDelete: b => {
     const maps = JSON.parse(db.settings.sync_maps || '[]');
